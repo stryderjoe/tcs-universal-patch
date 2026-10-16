@@ -65,6 +65,12 @@ of a saber (`FUN_0041DAD0`), and the streak is drawn from `streak` and `streak_N
 (`FUN_004A0BC0`, skipped when `streak` is unset). `FUN_004A0900` adds MagnaGuard-only streak toggles on two
 attack moves. Hilt choice in `FUN_00418FB0` is also by identity (Maul, Dooku).
 
+How many blades are drawn, lit and streaked is decided by name in three functions: `FUN_0041DAD0` (hilt and
+blades, called at `0x0041EACD` and `0x0041EB4D`), `FUN_0049F850` (per-blade glow, `0x0042C72A`) and
+`FUN_004A0900` (streak bits, `0x004B1D99`, character in EAX): Grievous 4 blades, Maul 2, the MagnaGuard 2 with
+per-end streaks on actions `0x0C`/`0x18` (animations `0x1A`/`0x1B`), everyone else 1. A character with
+`streak_2_locators` but another name gets a streak on its first blade only.
+
 ### 2. Some categories cannot drive vehicles
 
 Characters on the droid routine (droid without bounty_hunter, protocol, astromech) never call vehicle

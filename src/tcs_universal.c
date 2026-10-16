@@ -8,6 +8,8 @@
  *   bullet="ewokpebble"     which projectile type the character fires (name or number)
  *   pull_levers / pull_levers off   allow or forbid pulling levers, whatever the categories say
  *   drive_vehicles / drive_vehicles off   allow or forbid the scripted vehicle take-over (droids are refused)
+ *   blade_style="double|staff|four|curved"   draw and streak the blades like Maul, the MagnaGuard,
+ *                                   Grievous or Dooku (the game decides these by name)
  *   can_jump, enter_vehicles        give a character on the droid routine the jump and vehicle entry the
  *                                   standard routine has, while keeping everything else droid-like
  *   [arena] in TCSUniversal.ini     which Jedi the Geonosis arena spawns, and how many at once
@@ -67,6 +69,14 @@ static const fn_void       assign_behaviours = (fn_void)0x00414400;
 #define DROID_JUMP_CALL    0x004B610Fu   /* push esi; call FUN_00562570                         */
 #define DROID_AFTER_JUMP   0x004B6052u   /* push esi; call FUN_0049D720 (droid routine)          */
 #define VEHICLE_ENTRY      0x00488770u
+#define SABER_DRAW_CALL_1  0x0041EACDu   /* call FUN_0041DAD0(char, int, float): hilt and blades */
+#define SABER_DRAW_CALL_2  0x0041EB4Du
+#define SABER_GLOW_CALL    0x0042C72Au   /* call FUN_0049F850(char): per-blade glow            */
+#define SABER_STREAK_CALL  0x004B1D99u   /* call FUN_004A0900 (char in EAX): streak bits         */
+#define ID_DARTHMAUL_ADDR  0x007F1880u
+#define ID_GRIEVOUS_ADDR   0x007F1968u
+#define ID_BODYGUARD_ADDR  0x007F187Cu
+#define ID_DOOKU_ADDR      0x007F1A08u
 #define BULLET_TABLE       0x007EF388u   /* 0xA4 bytes per type, name first */
 #define BULLET_COUNT       0x2C
 
@@ -79,6 +89,7 @@ static signed char g_levers[MAX_DEFS];
 static signed char g_drive[MAX_DEFS];
 static signed char g_jump[MAX_DEFS];
 static signed char g_enter[MAX_DEFS];
+static signed char g_blades[MAX_DEFS];
 static FILE *g_log;
 static int g_patched;
 static FARPROC g_real_GetCommandLineA;
@@ -255,6 +266,31 @@ static void read_switch(void *ctx, signed char *table)
 }
 
 static void __cdecl kw_drive_vehicles(void *ctx) { read_switch(ctx, g_drive); }
+
+/* blade styles: which stock character's name the saber code should see while it handles this one */
+static const struct { const char *name; DWORD id_global; } BLADE_STYLES[] = {
+    { "single", 0 }, { "double", ID_DARTHMAUL_ADDR }, { "staff", ID_BODYGUARD_ADDR },
+    { "four", ID_GRIEVOUS_ADDR }, { "curved", ID_DOOKU_ADDR },
+};
+#define BLADE_STYLE_COUNT (sizeof(BLADE_STYLES) / sizeof(BLADE_STYLES[0]))
+
+static int blade_style_from_name(const char *name)
+{
+    int k;
+    for (k = 0; k < (int)BLADE_STYLE_COUNT; k++)
+        if (!_stricmp(name, BLADE_STYLES[k].name)) return k;
+    return -1;
+}
+
+static void __cdecl kw_blade_style(void *ctx)
+{
+    char name[32];
+    int i = parse_index(), k;
+    if (i < 0 || !next_token(ctx)) return;
+    unquote(TOKEN(ctx), name, sizeof name);
+    if ((k = blade_style_from_name(name)) >= 0) g_blades[i] = (signed char)k;
+    else tlog("character %d: unknown blade_style \"%s\"", i, name);
+}
 static void __cdecl kw_can_jump(void *ctx) { read_switch(ctx, g_jump); }
 static void __cdecl kw_enter_vehicles(void *ctx) { read_switch(ctx, g_enter); }
 
@@ -278,6 +314,9 @@ static void apply_value(int i, const char *key, const char *val)
         g_levers[i] = (char)(_stricmp(val, "off") != 0);
     } else if (!_stricmp(key, "drive_vehicles")) {
         g_drive[i] = (char)(_stricmp(val, "off") != 0);
+    } else if (!_stricmp(key, "blade_style")) {
+        if ((t = blade_style_from_name(val)) >= 0) g_blades[i] = (signed char)t;
+        else tlog("ini: unknown blade_style \"%s\"", val);
     } else if (!_stricmp(key, "can_jump")) {
         g_jump[i] = (char)(_stricmp(val, "off") != 0);
     } else if (!_stricmp(key, "enter_vehicles")) {
@@ -458,6 +497,106 @@ static __declspec(naked) void droid_after_stub(void)
     }
 }
 
+/* ------------------------------------------------------------------ blade styles */
+/* While the saber code handles a character with a blade style, the matching stock ID global names that
+   character, so the code's "is this Maul / Grievous / MagnaGuard / Dooku" tests pass for it. Colours and
+   locators still come from the character's own definition. Restored straight after the call. */
+static short *g_swapped;
+static short g_swapped_value;
+static int g_blade_depth;   /* only the outermost call swaps, in case the saber code ever nests */
+
+static void __cdecl blades_begin(char *chr)
+{
+    int id;
+    if (g_blade_depth++ > 0 || !chr) return;
+    id = CHAR_ID(chr);
+    if (id < 0 || id >= MAX_DEFS || g_blades[id] <= 0) return;
+    g_swapped = (short *)BLADE_STYLES[g_blades[id]].id_global;
+    g_swapped_value = *g_swapped;
+    *g_swapped = (short)id;
+}
+
+static void __cdecl blades_end(void)
+{
+    if (--g_blade_depth > 0) return;
+    if (g_swapped) *g_swapped = g_swapped_value;
+    g_swapped = NULL;
+}
+
+/* FUN_0041DAD0(char, int, float) */
+static __declspec(naked) void saber_draw_stub(void)
+{
+    __asm {
+        push eax
+        push ecx
+        push edx
+        push dword ptr [esp + 16]
+        call blades_begin
+        add esp, 4
+        pop edx
+        pop ecx
+        pop eax
+        push dword ptr [esp + 12]
+        push dword ptr [esp + 12]
+        push dword ptr [esp + 12]
+        mov eax, 0x0041DAD0
+        call eax
+        add esp, 12
+        push eax
+        call blades_end
+        pop eax
+        ret
+    }
+}
+
+/* FUN_0049F850(char) */
+static __declspec(naked) void saber_glow_stub(void)
+{
+    __asm {
+        push eax
+        push ecx
+        push edx
+        push dword ptr [esp + 16]
+        call blades_begin
+        add esp, 4
+        pop edx
+        pop ecx
+        pop eax
+        push dword ptr [esp + 4]
+        mov eax, 0x0049F850
+        call eax
+        add esp, 4
+        push eax
+        call blades_end
+        pop eax
+        ret
+    }
+}
+
+/* FUN_004A0900(arg) with the character in EAX */
+static __declspec(naked) void saber_streak_stub(void)
+{
+    __asm {
+        push eax
+        push ecx
+        push edx
+        push eax
+        call blades_begin
+        add esp, 4
+        pop edx
+        pop ecx
+        pop eax
+        push dword ptr [esp + 4]
+        mov ecx, 0x004A0900
+        call ecx
+        add esp, 4
+        push eax
+        call blades_end
+        pop eax
+        ret
+    }
+}
+
 /* ------------------------------------------------------------------ arena */
 #define ARENA_SLOT_TYPE(s)  (*(int *)((char *)(s) + 0x10))
 #define ARENA_SLOT_FLAGS(s) (*(unsigned *)((char *)(s) + 0x5C))
@@ -574,15 +713,15 @@ static void apply_patches(void)
             { "behaviour", kw_behaviour }, { "behavior", kw_behaviour },
             { "bullet", kw_bullet }, { "pull_levers", kw_pull_levers },
             { "drive_vehicles", kw_drive_vehicles }, { "can_jump", kw_can_jump },
-            { "enter_vehicles", kw_enter_vehicles },
+            { "enter_vehicles", kw_enter_vehicles }, { "blade_style", kw_blade_style },
         };
         memcpy(g_keywords, (void *)KEYWORD_TABLE, n * 8);
-        for (k = 0; k < 7; k++) {
+        for (k = 0; k < 8; k++) {
             g_keywords[2 * (n + k)] = (DWORD)mine[k].name;
             g_keywords[2 * (n + k) + 1] = (DWORD)mine[k].fn;
         }
         imm = (DWORD)g_keywords;
-        if (write_code(KEYWORD_TABLE_PUSH + 1, &imm, 4)) tlog("OK keywords (%d stock + 7)", n);
+        if (write_code(KEYWORD_TABLE_PUSH + 1, &imm, 4)) tlog("OK keywords (%d stock + 8)", n);
     } else if (n != 207) tlog("SKIP keywords: table has %d entries, expected 207", n);
 
     if (expect(ASSIGN_CALL, "e8 fe 97 f8 ff", "behaviour assignment") && write_call(ASSIGN_CALL, assign_wrapper))
@@ -612,6 +751,12 @@ static void apply_patches(void)
         if (write_call(DROID_AFTER_JUMP, droid_after_stub) && write_code(DROID_AFTER_JUMP + 5, &push_esi, 1))
             tlog("OK droid vehicle entry");
     }
+
+    if (expect(SABER_DRAW_CALL_1, "e8 fe ef ff ff", "saber draw 1") && expect(SABER_DRAW_CALL_2, "e8 7e ef ff ff", "saber draw 2") &&
+        expect(SABER_GLOW_CALL, "e8 21 31 07 00", "saber glow") && expect(SABER_STREAK_CALL, "e8 62 eb fe ff", "saber streaks") &&
+        write_call(SABER_DRAW_CALL_1, saber_draw_stub) && write_call(SABER_DRAW_CALL_2, saber_draw_stub) &&
+        write_call(SABER_GLOW_CALL, saber_glow_stub) && write_call(SABER_STREAK_CALL, saber_streak_stub))
+        tlog("OK blade styles");
 
     if (g_arena.enabled) {
         if (expect(ARENA_CALL_1, "e8 de f7 ff ff", "arena 1") && expect(ARENA_CALL_2, "e8 e2 e9 ff ff", "arena 2") &&
@@ -643,6 +788,7 @@ static void reset_state(const char *dir)
     memset(g_drive, -1, sizeof g_drive);
     memset(g_jump, -1, sizeof g_jump);
     memset(g_enter, -1, sizeof g_enter);
+    memset(g_blades, -1, sizeof g_blades);
     for (i = 0; i < MAX_DEFS; i++) g_bullet[i] = -1;
     memset(&g_arena, 0, sizeof g_arena);
     g_patched = 0;

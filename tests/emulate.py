@@ -289,7 +289,7 @@ def main():
 
     # --- start-up path ---------------------------------------------------------------------------------------
     m = Machine(INI)
-    stock = {a: m.rbytes(a, 5) for a in (0x5896D6, 0x48ABFD, 0x407E40, 0x55E470, 0x55F360, 0x4DEABD, 0x4DF8B9, 0x454593, 0x4B6100, 0x4B6052)}
+    stock = {a: m.rbytes(a, 5) for a in (0x5896D6, 0x48ABFD, 0x407E40, 0x55E470, 0x55F360, 0x4DEABD, 0x4DF8B9, 0x454593, 0x4B6100, 0x4B6052, 0x41EACD, 0x41EB4D, 0x42C72A, 0x4B1D99)}
     real = m.r32(IAT_GETCOMMANDLINEA)
     check("installs on the supported build", m.install() == 1)
     hooked = m.r32(IAT_GETCOMMANDLINEA)
@@ -304,7 +304,7 @@ def main():
 
     got = m.start_game_code()
     changed = [hex(a) for a, b in stock.items() if m.rbytes(a, 5) != b]
-    check("decrypted code: patches every site", len(changed) == 10, ", ".join(changed))
+    check("decrypted code: patches every site", len(changed) == 14, ", ".join(changed))
     check("restores the real GetCommandLineA and returns its result",
           m.r32(IAT_GETCOMMANDLINEA) == real and m.cstr(got) == "LEGOStarWarsSaga.exe")
 
@@ -312,9 +312,9 @@ def main():
     names = []
     while m.r32(table + 8 * len(names)):
         names.append(m.cstr(m.r32(table + 8 * len(names))))
-    check("keyword table: 207 stock keywords kept, 7 added, terminated",
-          len(names) == 214 and names[:207] == [m.cstr(m.r32(0x804248 + 8 * i)) for i in range(207)]
-          and names[207:] == ["behaviour", "behavior", "bullet", "pull_levers", "drive_vehicles", "can_jump", "enter_vehicles"], f"{len(names)} entries")
+    check("keyword table: 207 stock keywords kept, 8 added, terminated",
+          len(names) == 215 and names[:207] == [m.cstr(m.r32(0x804248 + 8 * i)) for i in range(207)]
+          and names[207:] == ["behaviour", "behavior", "bullet", "pull_levers", "drive_vehicles", "can_jump", "enter_vehicles", "blade_style"], f"{len(names)} entries")
 
     other = Machine(INI, timestamp=0x12345678)
     check("refuses another build (timestamp)", other.install() == 0 and other.r32(IAT_GETCOMMANDLINEA) != 0
@@ -328,8 +328,8 @@ def main():
             m.set_id(name, idx[name])
         except KeyError:
             pass
-    parse_keywords(m, idx["mydroid"], 'hit_points=4\nbehaviour="standard"\nbullet="geonosian"\npull_levers\ndrive_vehicles\ncan_jump\nenter_vehicles\n')
-    parse_keywords(m, idx["myguard"], 'weapon_locator=0\nbehaviour="jedi"\nbullet=43\npull_levers off\ndrive_vehicles off\n')
+    parse_keywords(m, idx["mydroid"], 'hit_points=4\nbehaviour="standard"\nbullet="geonosian"\npull_levers\ndrive_vehicles\ncan_jump\nenter_vehicles\nblade_style="double"\n')
+    parse_keywords(m, idx["myguard"], 'weapon_locator=0\nbehaviour="jedi"\nbullet=43\npull_levers off\ndrive_vehicles off\nblade_style=staff\n')
     hp = m.rbytes(m.r32(0x93B284) + idx["mydroid"] * 0x120 + 0xF4, 1)[0]
     check("stock keyword still parsed next to the new ones (hit_points=4)", hp == 4, f"hit_points {hp}")
 
@@ -420,6 +420,49 @@ def main():
     check("enter_vehicles: the droid routine also calls vehicle entry with the standard button mask",
           [a for a, _, _ in seen] == [0x49D720, 0x488770] and seen[1][1:] == (inst, mask) and pushed,
           f"mask {mask:X}")
+
+    # --- blade styles: the saber code sees the character under the stock name for one call ------------------------
+    def saber_call(site, name, regs_char=False):
+        """Run one patched call site with the game function replaced by a recorder."""
+        inst = m.make_instance(idx[name])
+        target = {0x41EACD: 0x41DAD0, 0x41EB4D: 0x41DAD0, 0x42C72A: 0x49F850, 0x4B1D99: 0x4A0900}[site]
+        seen = {}
+
+        def record(uc, address, size, user):
+            sp = uc.reg_read(UC_X86_REG_ESP)
+            seen["args"] = [m.r32(sp + 4 * k) for k in range(1, 4)]
+            seen["eax"] = uc.reg_read(UC_X86_REG_EAX)
+            seen["ids"] = {g: m.r16s(g) for g in (0x7F1880, 0x7F187C, 0x7F1968, 0x7F1A08)}
+            uc.reg_write(UC_X86_REG_EAX, 0x5A5A)
+            uc.reg_write(UC_X86_REG_ESP, sp + 4)
+            uc.reg_write(UC_X86_REG_EIP, m.r32(sp))
+        h = m.uc.hook_add(UC_HOOK_CODE, record, begin=target, end=target)
+        sp0 = STACK + STACK_SIZE - 0x1000
+        m.w32(sp0 - 4, 0xA1)   # what the game pushed before the call: up to three arguments
+        m.w32(sp0 - 8, 0xB2)
+        m.w32(sp0 - 12, inst if not regs_char else 0xC3)
+        m.uc.reg_write(UC_X86_REG_ESP, sp0 - 12)
+        m.uc.reg_write(UC_X86_REG_EAX, inst if regs_char else 0)
+        m.uc.emu_start(site, site + 5, count=1_000_000)
+        m.uc.hook_del(h)
+        after = {g: m.r16s(g) for g in (0x7F1880, 0x7F187C, 0x7F1968, 0x7F1A08)}
+        return seen, inst, after, m.uc.reg_read(UC_X86_REG_EAX), m.uc.reg_read(UC_X86_REG_ESP) == sp0 - 12
+
+    for g, v in ((0x7F1880, 300), (0x7F187C, 301), (0x7F1968, 302), (0x7F1A08, 303)):
+        m.w16(g, v)
+    stock_ids = {0x7F1880: 300, 0x7F187C: 301, 0x7F1968: 302, 0x7F1A08: 303}
+    seen, inst, after, eax, sp_ok = saber_call(0x41EACD, "mydroid")
+    check("saber draw: arguments passed through in order, Maul's name points at the character during the call",
+          seen["args"] == [inst, 0xB2, 0xA1] and seen["ids"][0x7F1880] == idx["mydroid"], str(seen["args"]))
+    check("saber draw: names restored, result and stack as the game expects",
+          after == stock_ids and eax == 0x5A5A and sp_ok)
+    seen, inst, after, eax, sp_ok = saber_call(0x4B1D99, "myguard", regs_char=True)
+    check("saber streaks (character in EAX): MagnaGuard's name points at a staff character, then restored",
+          seen["eax"] == inst and seen["args"][0] == 0xC3 and seen["ids"][0x7F187C] == idx["myguard"]
+          and after == stock_ids and sp_ok)
+    seen, inst, after, eax, sp_ok = saber_call(0x42C72A, "hansolo")
+    check("saber glow: a character without blade_style changes nothing",
+          seen["args"][0] == inst and seen["ids"] == stock_ids and after == stock_ids and sp_ok)
 
     # --- Geonosis arena --------------------------------------------------------------------------------------------
     slots = 0x882BD0

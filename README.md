@@ -3,7 +3,7 @@
 A small `dinput8.dll` for LEGO Star Wars: The Complete Saga (PC, Steam build) that turns behaviours the
 game ties to particular characters into settings any character can use. Research: `docs/HARDCODED.md`.
 
-**Status: experimental. Checked in an emulator against the game's own code (30 of 30 checks, below); not yet
+**Status: experimental. Checked in an emulator against the game's own code (34 of 34 checks, below); not yet
 run in the game.** Every patch site is checked byte for byte first; anything that does not match is skipped
 and logged. Please report what you see in game.
 
@@ -23,13 +23,15 @@ Use them in a character `.txt` like the stock keywords, or in `TCSUniversal.ini`
 | `bullet="â€¦"` | a projectile name or number (list in `docs/HARDCODED.md`, e.g. `ewokpebble`, `geonosian`, `bullet`, `spear`, `blue`) | Projectile type for this character's shots |
 | `pull_levers` / `pull_levers off` | | Allow or forbid levers, whatever the categories say |
 | `drive_vehicles` / `drive_vehicles off` | | Allow or forbid the scripted vehicle take-over, which refuses droids in the stock game |
+| `blade_style="…"` | `single`, `double` (Maul), `staff` (MagnaGuard), `four` (Grievous), `curved` (Dooku's hilt) | How the saber code draws, lights and streaks this character's blades; the game only does these for those four characters. Needs the matching `streak_N_locators` on the model and, for non-Jedi, `behaviour="jedi"` |
 | `can_jump` | | A character on the droid routine gets the jump the standard routine has (it still needs a jump animation) |
 | `enter_vehicles` | | A character on the droid routine can get into vehicles like the standard routine |
 
 What this unlocks:
 
 - A melee weapon with a streak on any character (not only MagnaGuard and Royal Guard):
-  `weapon="spear" streak=red streak_1_locators=6,7 behaviour="jedi"`.
+  `weapon="spear" streak=red streak_1_locators=6,7 behaviour="jedi"`. Streaks on both ends of a staff:
+  add `streak_2_locators=…` and `blade_style="staff"`. A double-bladed saber: `blade_style="double"`.
 - A droid that jumps and drives vehicles (not only IG-88 and 4-LOM) while staying a droid in every other
   way: `can_jump enter_vehicles`, plus `drive_vehicles` for levels that hand vehicles over by script. Or
   `behaviour="standard"` for the whole standard routine, as IG-88 has.
@@ -66,7 +68,7 @@ The party limit of 8 is a fixed array read in 401 places; this patch does not ch
 (`build_test.bat`) into the Unicorn x86 emulator and runs the game's own code through every patched site:
 the start-up hook (including "code still encrypted" and "wrong build"), the extended keyword table, the
 game's real tokenizer on character text, its behaviour assignment, projectile picker, both lever rules, the
-scripted vehicle take-over, the droid routine's jump and vehicle entry, and the arena picker. It also parses all 345 stock character files with the stock and the extended keyword
+scripted vehicle take-over, the droid routine's jump and vehicle entry, the three saber call sites, and the arena picker. It also parses all 345 stock character files with the stock and the extended keyword
 table and checks that the stored definitions are byte-identical. Needs `pip install unicorn pefile`; the
 exe path comes from the command line or `TCS_EXE`, the character folder from `TCS_CHARS`. No game files are
 included.
