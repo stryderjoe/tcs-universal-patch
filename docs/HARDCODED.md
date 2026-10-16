@@ -23,8 +23,25 @@ Unless a line says "in game", nothing here was observed in a running game.
 Selected flag bits in A`+4`: baddie `0x4`, jedi `0x8`, droid `0x10`, protocol `0x30`, astromech `0x50`,
 blaster `0x10000080` (it also sets can_fire `0x10000000`), teleport `0x40000`, zipup `0x100000`,
 bounty_hunter `0x1000000`, vehicle `0x2000`, beast `0x40000000`. B`+0x94`: no_jump `0x4`, no_shoot `0x8`.
-`variant=` sets B`+0x116` (stormtrooper 1, fett 2, macewindu 3, battledroid 4, wookiee 5, obiwankenobi 6,
-clone 8, rebel 9, ... hoverdroid 0x11, walker2legs 0xF, walker4legs 0x10; default 0xFF), `FUN_00413B80`.
+`variant=` sets B`+0x116`, `FUN_00413B80`. The default is 0xFF; an unknown name leaves it unchanged.
+
+| Value | Name | Value | Name | Value | Name |
+|---|---|---|---|---|---|
+| 0 | weirdo | 8 | clone | 0x10 | walker4legs |
+| 1 | stormtrooper | 9 | rebel | 0x11 | hoverdroid |
+| 2 | fett | 0xA | tie | 0x12 | critter |
+| 3 | macewindu | 0xB | lando | 0x13 | naboostarfighter |
+| 4 | battledroid | 0xC | luke | 0x14 | pod |
+| 5 | wookiee | 0xD | hansolo | 0x15 | republicgunship |
+| 6 | obiwankenobi | 0xE | padme | 0x16 | henchman |
+| 7 | leia | 0xF | walker2legs | | |
+
+Stock users of the routine-selecting variants:
+- `critter`: `bat`, `duvet`, `snake`, `womprat`, `worm`.
+- `pod`: the six podracer files.
+
+Two names in stock files are not in the parser's list, so those lines change nothing: `variant=anakin` (both
+scarred Anakins) and `variant=jedistarfighterep3` (the three Episode III Jedi starfighters).
 
 The code reads those name -> ID globals 833 times in 156 functions (catalog: `IDENTITY_CHECKS.md`). 528 of
 those reads are plain "is this character <name>?" checks followed by an equal/not-equal jump; the
@@ -45,7 +62,13 @@ some characters by identity:
 | B`+0x90 & 0x800` (cannon) | `FUN_004B30E0` | `0x004A9900` |
 | vehicle | `0x004B5120` | `0x004A9730` |
 | beast | `FUN_004B3000` | `0x004A9800` |
-| variant 4, 0x11, 0xF, 0x10, 0x12, 0x14, 0 | their own routines | |
+| variant 4 battledroid | `0x004B5EF0` (droid) | `0x004AA490` |
+| variant 0x11 hoverdroid | `FUN_004B38E0` | `0x004AAB20` |
+| variant 0xF walker2legs / 0x10 walker4legs | `FUN_004B62F0` / `FUN_004B6430` | `0x004AAAC0` / `0x004AAC50` |
+| variant 0x12 critter | `FUN_004B39F0` | `0x004AAB80` |
+| variant 0x14 pod | `FUN_004B6800` | `FUN_004AB910` |
+| variant 2 fett | unchanged | unchanged; extra hook `FUN_004A9320` |
+| variant 0 weirdo | `FUN_004B5820` | `0x004A9940` |
 | B`+0x94 & 0x10000000` (hover_wings) | `0x004B65F0` | `0x004AB100` |
 | by identity | destroyer, mini_droideka, superbattledroid, barman, jawa, ugnaught, dragbomb, republicgunship(_green), speederbike, probedroid | |
 | by identity | **bodyguard (MagnaGuard), imperialguard (Royal Guard) -> the Jedi routine** | Jedi AI |
@@ -172,4 +195,3 @@ creatures (`DAT_00888ED2 < 8`); phases 4 to 6 pick 6 objective droids into `0x00
 - The two projectile IDs `0x007F17D0` / `0x007F17D4` are not in the name table (probably Indiana Jones
   bonus characters).
 - `bob` (arena slots without flag 2) was not identified.
-- The meaning of the remaining variant routines (`0x12`, `0x14`).

@@ -3,7 +3,7 @@
 A small `dinput8.dll` for LEGO Star Wars: The Complete Saga (PC, Steam build) that turns behaviours the
 game ties to particular characters into settings any character can use. Research: `docs/HARDCODED.md`.
 
-**Status: experimental. Checked in an emulator against the game's own code (57 of 57 checks, below); not yet
+**Status: experimental. Checked in an emulator against the game's own code (58 of 58 checks, below); not yet
 run in the game.** Every patch site is checked byte for byte first; anything that does not match is skipped
 and logged. Please report what you see in game.
 
@@ -19,7 +19,7 @@ Use them in a character `.txt` like the stock keywords, or in `TCSUniversal.ini`
 
 | Keyword | Values | Effect |
 | --- | --- | --- |
-| `behaviour="…"` (or `behavior`) | `standard`, `jedi`, `droid`, `protocol`, `astromech`, `beast`, `winged`, `superbattledroid`, `droideka`, `jawa`, `variant0` | Which native behaviour and AI routine the character runs, instead of the one its categories or name pick |
+| `behaviour="…"` (or `behavior`) | `standard`, `jedi`, `droid`, `protocol`, `astromech`, `beast`, `winged`, `superbattledroid`, `droideka`, `jawa`, `variant0` (also `weirdo`), `cannon`, `vehicle`, `battledroid`, `hoverdroid`, `walker2legs`, `walker4legs`, `critter` (womp rat, bat, snake), `pod` (podracers) | Which native behaviour and AI routine the character runs, instead of the one its categories or name pick |
 | `bullet="…"` | a projectile name or number (list in `docs/HARDCODED.md`, e.g. `ewokpebble`, `geonosian`, `bullet`, `spear`, `blue`) | Projectile type for this character's shots |
 | `pull_levers` / `pull_levers off` | | Allow or forbid levers, whatever the categories say |
 | `drive_vehicles` / `drive_vehicles off` | | Allow or forbid the scripted vehicle take-over, which refuses droids in the stock game |

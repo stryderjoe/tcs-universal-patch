@@ -149,6 +149,15 @@ static const Behaviour BEHAVIOURS[] = {
     { "droideka",         0x004B6520, 0x004AB010, 0 },
     { "jawa",             0x004B3B80, 0,          0 },  /* jawa and ugnaught keep their AI                            */
     { "variant0",         0x004B5820, 0x004A9940, 0 },  /* routine of variant 0 characters                           */
+    { "weirdo",           0x004B5820, 0x004A9940, 0 },  /* the stock name of variant 0                                */
+    { "cannon",           0x004B30E0, 0x004A9900, 0 },  /* B+0x90 & 0x800                                             */
+    { "vehicle",          0x004B5120, 0x004A9730, 0 },  /* vehicle flag                                               */
+    { "battledroid",      0x004B5EF0, 0x004AA490, 0 },  /* variant 4: droid routine, battle droid AI                  */
+    { "hoverdroid",       0x004B38E0, 0x004AAB20, 0 },  /* variant 0x11                                               */
+    { "walker2legs",      0x004B62F0, 0x004AAAC0, 0 },  /* variant 0xF                                                */
+    { "walker4legs",      0x004B6430, 0x004AAC50, 0 },  /* variant 0x10                                               */
+    { "critter",          0x004B39F0, 0x004AAB80, 0 },  /* variant 0x12: bat, snake, womp rat, worm                   */
+    { "pod",              0x004B6800, 0x004AB910, 0 },  /* variant 0x14: podracers                                    */
 };
 #define BEHAVIOUR_COUNT (sizeof(BEHAVIOURS) / sizeof(BEHAVIOURS[0]))
 

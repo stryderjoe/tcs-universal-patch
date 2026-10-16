@@ -347,6 +347,24 @@ def main():
     check("[characters] in the INI: battledroid -> standard, c3po -> jedi",
           r["battledroid"] == ROUTINE["standard"] and r["c3po"] == ROUTINE["jedi"])
 
+    # each further behaviour name gives exactly what the game's own rules give a character with that variant/flag
+    kinds = {"cannon": (0, 0x800, 0xFF), "vehicle": (0x2000, 0, 0xFF), "battledroid": (0, 0, 4),
+             "hoverdroid": (0, 0, 0x11), "walker2legs": (0, 0, 0xF), "walker4legs": (0, 0, 0x10),
+             "critter": (0, 0, 0x12), "pod": (0, 0, 0x14), "weirdo": (0, 0, 0)}
+    bm = Machine({"characters": {f"as_{k}": f"behaviour={k}" for k in kinds}})
+    bm.install()
+    bm.start_game_code()
+    bidx = bm.make_definitions([(f"ref_{k}", fa, f90, 0, v) for k, (fa, f90, v) in kinds.items()]
+                               + [(f"as_{k}", 0, 0, 0, 0xFF) for k in kinds])
+    bm.run(0x48ABFD, 0x48AC02)
+    a_base = bm.r32(0x93B274)
+    triple = lambda i: tuple(bm.r32(a_base + i * 0x4C + o) for o in (0x18, 0x1C, 0x20))
+    same = {k: triple(bidx[f"as_{k}"]) == triple(bidx[f"ref_{k}"]) for k in kinds}
+    check("behaviour= cannon, vehicle, battledroid, hoverdroid, walker2legs/4legs, critter, pod, weirdo: "
+          "routine, AI and extra equal the game's own assignment for that variant or flag",
+          all(same.values()) and len({triple(bidx[f"ref_{k}"])[0] for k in kinds}) >= 8,
+          ", ".join(k for k, ok in same.items() if not ok))
+
     # --- projectile picker ---------------------------------------------------------------------------------------
     pick = lambda name, default=0: m.call(0x407E40, m.make_instance(idx[name]), default)
     check("bullet= by name (geonosian = 0x13) and by number (43 = spear)",
