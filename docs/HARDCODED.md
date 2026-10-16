@@ -142,9 +142,8 @@ Size of a change (`tools/party_scan.py`, run on your own unwrapped exe, lists ev
 598 instructions address the party arrays or the level player list (496 the pointer array), 114 hold one
 of their addresses as a constant, 50 compare against an array end (loop end markers such as `0x0093D810`;
 memory reads of `0x0093D810` itself are a separate variable), and those functions contain 39 compares with
-7 or 8. Arrays indexed by a character's party slot (`+0x280`) are not all found by a static scan. Raising the
-limit means moving every one of these arrays, fixing each loop bound and checking it in play. The patch does
-not attempt it.
+7 or 8. Arrays indexed by a character's party slot (`+0x280`) are not all found by a static scan. The full inventory and a step-by-step plan are in `PARTY_LIMIT.md`
+(including the unlock limit of 7 at level end). The patch does not change the limit yet.
 
 ### 8. Generic Jedi in the Geonosis arena
 
