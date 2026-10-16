@@ -13,6 +13,8 @@
  *   geonosian_variant               treated as a Geonosian wherever the game checks for one: 50/50 armed at
  *                                   spawn, Geonosian bolts and armed/unarmed layers, no firing in flight
  *   weapon_always_out               keep the weapon drawn, as the Gamorrean guard, Ewoks and Tarpals do
+ *   acts_as="name"                  the character also counts as that stock character at the game's 418
+ *                                   "is this <name>?" checks (docs/IDENTITY_CHECKS.md)
  *   can_jump, enter_vehicles        give a character on the droid routine the jump and vehicle entry the
  *                                   standard routine has, while keeping everything else droid-like
  *   [arena] in TCSUniversal.ini     which Jedi the Geonosis arena spawns, and how many at once
@@ -94,6 +96,7 @@ static const fn_void       assign_behaviours = (fn_void)0x00414400;
 #define MAX_DEFS 512
 
 #include "party_table.h"
+#include "acts_as_table.h"
 
 /* ------------------------------------------------------------------ state */
 static signed char g_behaviour[MAX_DEFS];
@@ -105,6 +108,8 @@ static signed char g_enter[MAX_DEFS];
 static signed char g_blades[MAX_DEFS];
 static signed char g_geonosian[MAX_DEFS];
 static signed char g_weapon_out[MAX_DEFS];
+static char g_acts_as_name[MAX_DEFS][32];
+static short g_acts_as[MAX_DEFS];   /* stock character ID this one also counts as, -1 none */
 static FILE *g_log;
 static int g_patched;
 static FARPROC g_real_GetCommandLineA;
@@ -306,6 +311,12 @@ static void __cdecl kw_blade_style(void *ctx)
     if ((k = blade_style_from_name(name)) >= 0) g_blades[i] = (signed char)k;
     else tlog("character %d: unknown blade_style \"%s\"", i, name);
 }
+static void __cdecl kw_acts_as(void *ctx)
+{
+    int i = parse_index();
+    if (i < 0 || !next_token(ctx)) return;
+    unquote(TOKEN(ctx), g_acts_as_name[i], sizeof g_acts_as_name[i]);
+}
 static void __cdecl kw_weapon_always_out(void *ctx) { read_switch(ctx, g_weapon_out); }
 static void __cdecl kw_geonosian_variant(void *ctx) { read_switch(ctx, g_geonosian); }
 static void __cdecl kw_can_jump(void *ctx) { read_switch(ctx, g_jump); }
@@ -316,6 +327,7 @@ static DWORD g_keywords[2 * 260];
 
 /* ------------------------------------------------------------------ behaviour assignment */
 static char g_ini[MAX_PATH];
+static int install_acts_as(void);
 
 static void apply_value(int i, const char *key, const char *val)
 {
@@ -334,6 +346,8 @@ static void apply_value(int i, const char *key, const char *val)
     } else if (!_stricmp(key, "blade_style")) {
         if ((t = blade_style_from_name(val)) >= 0) g_blades[i] = (signed char)t;
         else tlog("ini: unknown blade_style \"%s\"", val);
+    } else if (!_stricmp(key, "acts_as")) {
+        strncpy(g_acts_as_name[i], val, sizeof g_acts_as_name[i] - 1);
     } else if (!_stricmp(key, "weapon_always_out")) {
         g_weapon_out[i] = (char)(_stricmp(val, "off") != 0);
     } else if (!_stricmp(key, "geonosian_variant")) {
@@ -372,6 +386,12 @@ static void __cdecl assign_wrapper(void)
     int i, n;
     assign_behaviours();
     apply_ini_characters();
+    for (i = 0; i < MAX_DEFS; i++) {
+        if (!g_acts_as_name[i][0]) continue;
+        g_acts_as[i] = char_index(g_acts_as_name[i]);
+        tlog("character %d acts as %s (%d)", i, g_acts_as_name[i], g_acts_as[i]);
+    }
+    install_acts_as();
     n = G_DEF_COUNT < MAX_DEFS ? G_DEF_COUNT : MAX_DEFS;
     for (i = 0; i < n; i++) {
         const Behaviour *b;
@@ -621,7 +641,8 @@ static __declspec(naked) void saber_streak_stub(void)
 /* ------------------------------------------------------------------ Geonosian variant */
 static int __cdecl geonosian_like(int id)
 {
-    return id >= 0 && id < MAX_DEFS && g_geonosian[id] > 0;
+    return id >= 0 && id < MAX_DEFS &&
+           (g_geonosian[id] > 0 || (g_acts_as[id] != -1 && g_acts_as[id] == *(short *)ID_GEONOSIAN_ADDR));
 }
 
 /* replace "cmp ax|cx, word ptr [ID_geonosian]": ZF set when the ID is the Geonosian's or opted in */
@@ -670,7 +691,8 @@ static __declspec(naked) void geo_cmp_cx(void)
 /* ------------------------------------------------------------------ weapon always out */
 static int __cdecl weapon_out_like(int id)
 {
-    return id >= 0 && id < MAX_DEFS && g_weapon_out[id] > 0;
+    return id >= 0 && id < MAX_DEFS &&
+           (g_weapon_out[id] > 0 || (g_acts_as[id] != -1 && g_acts_as[id] == *(short *)ID_TARPALS_ADDR));
 }
 
 /* replaces "cmp ax, word ptr [ID_captaintarpals]" (the jne after it stays): ZF set for Tarpals or opted in */
@@ -701,7 +723,10 @@ static __declspec(naked) void weapon_out_cmp(void)
 static int __cdecl needs_rock_sounds(int id)
 {
     if (id == *(short *)ID_EWOK_ADDR || id == *(short *)ID_WICKET_ADDR) return 1;
-    return id >= 0 && id < MAX_DEFS && g_bullet[id] >= 0x1B && g_bullet[id] <= 0x1F;
+    if (id < 0 || id >= MAX_DEFS) return 0;
+    if (g_acts_as[id] != -1 && (g_acts_as[id] == *(short *)ID_EWOK_ADDR || g_acts_as[id] == *(short *)ID_WICKET_ADDR))
+        return 1;
+    return g_bullet[id] >= 0x1B && g_bullet[id] <= 0x1F;
 }
 
 /* replaces the two compares (character ID in EBX); ZF set = load the sounds */
@@ -716,6 +741,87 @@ static __declspec(naked) void rock_sounds_test(void)
         cmp eax, 1
         ret
     }
+}
+
+/* ------------------------------------------------------------------ acts_as */
+/* Each "cmp ax|cx|dx, word ptr [ID_x]" followed by je/jne becomes "call stub; nop; nop". The stub repeats
+   the compare; when it does not match, ZF is set if the compared character acts as ID_x. Only ZF is used
+   by the jump after, and every register is kept. */
+static int __cdecl acts_as_match(int id, short *id_global)
+{
+    return id >= 0 && id < MAX_DEFS && g_acts_as[id] != -1 && g_acts_as[id] == *id_global;
+}
+
+static int install_acts_as(void)
+{
+    static const unsigned char modrm[3] = { 0x05, 0x0D, 0x15 };       /* cmp ax|cx|dx, [disp32]     */
+    static const unsigned char movsx[3][3] = { { 0x0F, 0xBF, 0xC0 },   /* movsx eax, ax              */
+                                               { 0x0F, 0xBF, 0xC1 },   /* movsx eax, cx              */
+                                               { 0x0F, 0xBF, 0xC2 } }; /* movsx eax, dx              */
+    unsigned k, done = 0, i;
+    int any = 0;
+    unsigned char *code;
+    for (i = 0; i < MAX_DEFS; i++) if (g_acts_as[i] != -1) any = 1;
+    if (!any) return 0;
+    code = (unsigned char *)VirtualAlloc(NULL, 48 * (sizeof ACTS_AS_SITES / sizeof ACTS_AS_SITES[0]),
+                                         MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE);
+    if (!code) return 0;
+    for (k = 0; k < sizeof ACTS_AS_SITES / sizeof ACTS_AS_SITES[0]; k++) {
+        const ActsAsSite *a = &ACTS_AS_SITES[k];
+        unsigned char *at = (unsigned char *)a->addr, *st = code + 48 * k, *q = st, jmp[7];
+        DWORD rel, g = a->id_global;
+        if (at[0] != 0x66 || at[1] != 0x3B || at[2] != modrm[a->reg] || *(DWORD *)(at + 3) != g) continue;
+        memcpy(q, at, 7); q += 7;                      /* cmp r16, [ID_x]                   */
+        *q++ = 0x74; *q++ = 0;                         /* je done (patched below)           */
+        { unsigned char *je = q - 1;
+          *q++ = 0x50; *q++ = 0x51; *q++ = 0x52;       /* push eax, ecx, edx                */
+          memcpy(q, movsx[a->reg], 3); q += 3;         /* movsx eax, r16                    */
+          *q++ = 0x68; memcpy(q, &g, 4); q += 4;       /* push ID_x address                 */
+          *q++ = 0x50;                                 /* push eax                          */
+          *q++ = 0xE8; rel = (DWORD)acts_as_match - ((DWORD)q + 4); memcpy(q, &rel, 4); q += 4;
+          *q++ = 0x83; *q++ = 0xC4; *q++ = 0x08;       /* add esp, 8                        */
+          *q++ = 0x83; *q++ = 0xF8; *q++ = 0x01;       /* cmp eax, 1: ZF = acts as          */
+          *q++ = 0x5A; *q++ = 0x59; *q++ = 0x58;       /* pop edx, ecx, eax (flags kept)    */
+          *je = (unsigned char)(q - (je + 1));
+        }
+        *q++ = 0xC3;                                   /* done: ret                         */
+        jmp[0] = 0xE8; rel = (DWORD)st - (a->addr + 5); memcpy(jmp + 1, &rel, 4);
+        jmp[5] = 0x90; jmp[6] = 0x90;
+        if (write_code(a->addr, jmp, 7)) done++;
+    }
+    FlushInstructionCache(GetCurrentProcess(), code, 48 * (sizeof ACTS_AS_SITES / sizeof ACTS_AS_SITES[0]));
+
+    /* "movsx r32, word [ID_x]; cmp rA, r32" (rA = the character), followed by je/jne */
+    {
+        unsigned n = sizeof ACTS_AS_LOADS / sizeof ACTS_AS_LOADS[0], done2 = 0;
+        unsigned char *code2 = (unsigned char *)VirtualAlloc(NULL, 48 * n, MEM_COMMIT | MEM_RESERVE,
+                                                             PAGE_EXECUTE_READWRITE);
+        for (k = 0; code2 && k < n; k++) {
+            const ActsAsLoad *a = &ACTS_AS_LOADS[k];
+            unsigned char *at = (unsigned char *)a->addr, *st = code2 + 48 * k, *q = st, hook[9], *je;
+            DWORD rel, g = a->id_global;
+            if (at[0] != 0x0F || at[1] != 0xBF || *(DWORD *)(at + 3) != g || at[7] != 0x3B && at[7] != 0x39) continue;
+            memcpy(q, at, 9); q += 9;                      /* movsx r32, [ID_x]; cmp rA, r32    */
+            *q++ = 0x74; je = q; *q++ = 0;                 /* je done                           */
+            *q++ = 0x50; *q++ = 0x51; *q++ = 0x52;         /* push eax, ecx, edx                */
+            *q++ = 0x8B; *q++ = (unsigned char)(0xC0 | a->other_reg);  /* mov eax, rA (pushed value unchanged) */
+            *q++ = 0x68; memcpy(q, &g, 4); q += 4;         /* push ID_x address                 */
+            *q++ = 0x50;                                   /* push eax                          */
+            *q++ = 0xE8; rel = (DWORD)acts_as_match - ((DWORD)q + 4); memcpy(q, &rel, 4); q += 4;
+            *q++ = 0x83; *q++ = 0xC4; *q++ = 0x08;         /* add esp, 8                        */
+            *q++ = 0x83; *q++ = 0xF8; *q++ = 0x01;         /* cmp eax, 1                        */
+            *q++ = 0x5A; *q++ = 0x59; *q++ = 0x58;         /* pop edx, ecx, eax                 */
+            *je = (unsigned char)(q - (je + 1));
+            *q++ = 0xC3;
+            hook[0] = 0xE8; rel = (DWORD)st - (a->addr + 5); memcpy(hook + 1, &rel, 4);
+            memset(hook + 5, 0x90, 4);
+            if (write_code(a->addr, hook, 9)) done2++;
+        }
+        if (code2) FlushInstructionCache(GetCurrentProcess(), code2, 48 * n);
+        tlog("OK acts_as (%u of %u checks, %u of %u load-and-compare checks)", done,
+             (unsigned)(sizeof ACTS_AS_SITES / sizeof ACTS_AS_SITES[0]), done2, n);
+    }
+    return 1;
 }
 
 /* ------------------------------------------------------------------ arena */
@@ -1018,14 +1124,15 @@ static void apply_patches(void)
             { "drive_vehicles", kw_drive_vehicles }, { "can_jump", kw_can_jump },
             { "enter_vehicles", kw_enter_vehicles }, { "blade_style", kw_blade_style },
             { "geonosian_variant", kw_geonosian_variant }, { "weapon_always_out", kw_weapon_always_out },
+            { "acts_as", kw_acts_as },
         };
         memcpy(g_keywords, (void *)KEYWORD_TABLE, n * 8);
-        for (k = 0; k < 10; k++) {
+        for (k = 0; k < 11; k++) {
             g_keywords[2 * (n + k)] = (DWORD)mine[k].name;
             g_keywords[2 * (n + k) + 1] = (DWORD)mine[k].fn;
         }
         imm = (DWORD)g_keywords;
-        if (write_code(KEYWORD_TABLE_PUSH + 1, &imm, 4)) tlog("OK keywords (%d stock + 10)", n);
+        if (write_code(KEYWORD_TABLE_PUSH + 1, &imm, 4)) tlog("OK keywords (%d stock + 11)", n);
     } else if (n != 207) tlog("SKIP keywords: table has %d entries, expected 207", n);
 
     if (expect(ASSIGN_CALL, "e8 fe 97 f8 ff", "behaviour assignment") && write_call(ASSIGN_CALL, assign_wrapper))
@@ -1126,6 +1233,8 @@ static void reset_state(const char *dir)
     memset(g_blades, -1, sizeof g_blades);
     memset(g_geonosian, -1, sizeof g_geonosian);
     memset(g_weapon_out, -1, sizeof g_weapon_out);
+    memset(g_acts_as_name, 0, sizeof g_acts_as_name);
+    for (i = 0; i < MAX_DEFS; i++) g_acts_as[i] = -1;
     for (i = 0; i < MAX_DEFS; i++) g_bullet[i] = -1;
     memset(&g_arena, 0, sizeof g_arena);
     g_patched = 0;

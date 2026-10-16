@@ -253,11 +253,12 @@ CHARS = [
     ("geonosian", BLASTER, 0, 0, 0xFF),
     ("battledroid_geonosian", DROID | BLASTER, 0, 0, 0xFF),
     ("bob", 0, 0, 0, 0xFF),
+    ("mystery", BLASTER, 0, 0, 0xFF),
 ]
 
 INI = {
     "characters": {"battledroid": "behaviour=standard bullet=ewokpebble pull_levers=on",
-                   "c3po": "behaviour=jedi"},
+                   "c3po": "behaviour=jedi", "mystery": "acts_as=ewok"},
     "arena": {"enabled": "1", "jedi": "luminara,shaakti,kiadimundi,kitfisto",
               "max_jedi_at_once": "3", "respawn": "1", "in_freeplay": "0"},
 }
@@ -313,9 +314,9 @@ def main():
     names = []
     while m.r32(table + 8 * len(names)):
         names.append(m.cstr(m.r32(table + 8 * len(names))))
-    check("keyword table: 207 stock keywords kept, 10 added, terminated",
-          len(names) == 217 and names[:207] == [m.cstr(m.r32(0x804248 + 8 * i)) for i in range(207)]
-          and names[207:] == ["behaviour", "behavior", "bullet", "pull_levers", "drive_vehicles", "can_jump", "enter_vehicles", "blade_style", "geonosian_variant", "weapon_always_out"], f"{len(names)} entries")
+    check("keyword table: 207 stock keywords kept, 11 added, terminated",
+          len(names) == 218 and names[:207] == [m.cstr(m.r32(0x804248 + 8 * i)) for i in range(207)]
+          and names[207:] == ["behaviour", "behavior", "bullet", "pull_levers", "drive_vehicles", "can_jump", "enter_vehicles", "blade_style", "geonosian_variant", "weapon_always_out", "acts_as"], f"{len(names)} entries")
 
     other = Machine(INI, timestamp=0x12345678)
     check("refuses another build (timestamp)", other.install() == 0 and other.r32(IAT_GETCOMMANDLINEA) != 0
@@ -594,6 +595,29 @@ def main():
     t = empty.r32(0x882BD0 + 0x10)
     check("arena with an empty Jedi list only spawns Geonosians",
           t in (eidx["geonosian"], eidx["battledroid_geonosian"]), f"type {t}")
+
+    # --- acts_as: the character also counts as a stock character at the game's name checks ---------------------
+    sys.path.insert(0, os.path.join(HERE, "..", "tools"))
+    sites = [int(l.split()[1].rstrip("u,"), 16) for l in open(os.path.join(HERE, "..", "src", "acts_as_table.h"))
+             if l.strip().startswith("{ 0x")]
+    patched = sum(1 for a in sites if m.rbytes(a, 1)[0] == 0xE8)
+    check("acts_as: installed at every listed name check once a character uses it", patched == len(sites) == 528,
+          f"{patched} of {len(sites)}")
+    ewok_site = next(int(l.split()[1].rstrip("u,"), 16) for l in open(os.path.join(HERE, "..", "src", "acts_as_table.h"))
+                     if "/* ewok */" in l and ", 0, " in l)
+
+    def name_check(site, ident):
+        regs = {UC_X86_REG_EAX: 0x7AB0000 | (ident & 0xFFFF), UC_X86_REG_ECX: 0x1234, UC_X86_REG_EDX: 0x5678}
+        m.run(site, site + 7, regs=regs)
+        kept = all(m.uc.reg_read(r) == v for r, v in regs.items())
+        return bool(m.uc.reg_read(UC_X86_REG_EFLAGS) & 0x40), kept
+    from unicorn.x86_const import UC_X86_REG_EFLAGS
+    res = {n: name_check(ewok_site, idx[n]) for n in ("ewok", "mystery", "hansolo")}
+    check("acts_as: an \"is it Ewok?\" check matches Ewok and the character acting as Ewok, not others; registers kept",
+          res["ewok"] == (True, True) and res["mystery"] == (True, True) and res["hansolo"] == (False, True),
+          str(res))
+    check("acts_as through real game code: the projectile picker gives the Ewok pebble (0x1B) to the stand-in",
+          m.call(0x407E40, m.make_instance(idx["mystery"]), 0) == 0x1B)
 
     # --- party size 12 (experimental) ----------------------------------------------------------------------------
     sys.path.insert(0, os.path.join(HERE, "..", "tools"))

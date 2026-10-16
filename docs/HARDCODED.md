@@ -26,7 +26,9 @@ bounty_hunter `0x1000000`, vehicle `0x2000`, beast `0x40000000`. B`+0x94`: no_ju
 `variant=` sets B`+0x116` (stormtrooper 1, fett 2, macewindu 3, battledroid 4, wookiee 5, obiwankenobi 6,
 clone 8, rebel 9, ... hoverdroid 0x11, walker2legs 0xF, walker4legs 0x10; default 0xFF), `FUN_00413B80`.
 
-The code reads those name -> ID globals 833 times in 156 functions.
+The code reads those name -> ID globals 833 times in 156 functions (catalog: `IDENTITY_CHECKS.md`). 528 of
+those reads are plain "is this character <name>?" checks followed by an equal/not-equal jump; the
+`acts_as` keyword makes any character pass them for the name it names.
 
 ## The behaviour routine table (root of items 1, 2 and 3)
 
