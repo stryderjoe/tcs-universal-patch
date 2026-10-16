@@ -10,6 +10,8 @@
  *   drive_vehicles / drive_vehicles off   allow or forbid the scripted vehicle take-over (droids are refused)
  *   blade_style="double|staff|four|curved"   draw and streak the blades like Maul, the MagnaGuard,
  *                                   Grievous or Dooku (the game decides these by name)
+ *   geonosian_variant               treated as a Geonosian wherever the game checks for one: 50/50 armed at
+ *                                   spawn, Geonosian bolts and armed/unarmed layers, no firing in flight
  *   can_jump, enter_vehicles        give a character on the droid routine the jump and vehicle entry the
  *                                   standard routine has, while keeping everything else droid-like
  *   [arena] in TCSUniversal.ini     which Jedi the Geonosis arena spawns, and how many at once
@@ -77,6 +79,7 @@ static const fn_void       assign_behaviours = (fn_void)0x00414400;
 #define ID_GRIEVOUS_ADDR   0x007F1968u
 #define ID_BODYGUARD_ADDR  0x007F187Cu
 #define ID_DOOKU_ADDR      0x007F1A08u
+#define ID_GEONOSIAN_ADDR  0x007F18DCu   /* six "cmp ax|cx, [ID_geonosian]" sites below     */
 #define BULLET_TABLE       0x007EF388u   /* 0xA4 bytes per type, name first */
 #define BULLET_COUNT       0x2C
 
@@ -90,6 +93,7 @@ static signed char g_drive[MAX_DEFS];
 static signed char g_jump[MAX_DEFS];
 static signed char g_enter[MAX_DEFS];
 static signed char g_blades[MAX_DEFS];
+static signed char g_geonosian[MAX_DEFS];
 static FILE *g_log;
 static int g_patched;
 static FARPROC g_real_GetCommandLineA;
@@ -291,6 +295,7 @@ static void __cdecl kw_blade_style(void *ctx)
     if ((k = blade_style_from_name(name)) >= 0) g_blades[i] = (signed char)k;
     else tlog("character %d: unknown blade_style \"%s\"", i, name);
 }
+static void __cdecl kw_geonosian_variant(void *ctx) { read_switch(ctx, g_geonosian); }
 static void __cdecl kw_can_jump(void *ctx) { read_switch(ctx, g_jump); }
 static void __cdecl kw_enter_vehicles(void *ctx) { read_switch(ctx, g_enter); }
 
@@ -317,6 +322,8 @@ static void apply_value(int i, const char *key, const char *val)
     } else if (!_stricmp(key, "blade_style")) {
         if ((t = blade_style_from_name(val)) >= 0) g_blades[i] = (signed char)t;
         else tlog("ini: unknown blade_style \"%s\"", val);
+    } else if (!_stricmp(key, "geonosian_variant")) {
+        g_geonosian[i] = (char)(_stricmp(val, "off") != 0);
     } else if (!_stricmp(key, "can_jump")) {
         g_jump[i] = (char)(_stricmp(val, "off") != 0);
     } else if (!_stricmp(key, "enter_vehicles")) {
@@ -597,6 +604,55 @@ static __declspec(naked) void saber_streak_stub(void)
     }
 }
 
+/* ------------------------------------------------------------------ Geonosian variant */
+static int __cdecl geonosian_like(int id)
+{
+    return id >= 0 && id < MAX_DEFS && g_geonosian[id] > 0;
+}
+
+/* replace "cmp ax|cx, word ptr [ID_geonosian]": ZF set when the ID is the Geonosian's or opted in */
+static __declspec(naked) void geo_cmp_ax(void)
+{
+    __asm {
+        cmp ax, word ptr ds:[ID_GEONOSIAN_ADDR]
+        je done
+        push eax
+        push ecx
+        push edx
+        movsx eax, ax
+        push eax
+        call geonosian_like
+        add esp, 4
+        cmp eax, 1
+        pop edx
+        pop ecx
+        pop eax
+    done:
+        ret
+    }
+}
+
+static __declspec(naked) void geo_cmp_cx(void)
+{
+    __asm {
+        cmp cx, word ptr ds:[ID_GEONOSIAN_ADDR]
+        je done
+        push eax
+        push ecx
+        push edx
+        movsx eax, cx
+        push eax
+        call geonosian_like
+        add esp, 4
+        cmp eax, 1
+        pop edx
+        pop ecx
+        pop eax
+    done:
+        ret
+    }
+}
+
 /* ------------------------------------------------------------------ arena */
 #define ARENA_SLOT_TYPE(s)  (*(int *)((char *)(s) + 0x10))
 #define ARENA_SLOT_FLAGS(s) (*(unsigned *)((char *)(s) + 0x5C))
@@ -714,14 +770,15 @@ static void apply_patches(void)
             { "bullet", kw_bullet }, { "pull_levers", kw_pull_levers },
             { "drive_vehicles", kw_drive_vehicles }, { "can_jump", kw_can_jump },
             { "enter_vehicles", kw_enter_vehicles }, { "blade_style", kw_blade_style },
+            { "geonosian_variant", kw_geonosian_variant },
         };
         memcpy(g_keywords, (void *)KEYWORD_TABLE, n * 8);
-        for (k = 0; k < 8; k++) {
+        for (k = 0; k < 9; k++) {
             g_keywords[2 * (n + k)] = (DWORD)mine[k].name;
             g_keywords[2 * (n + k) + 1] = (DWORD)mine[k].fn;
         }
         imm = (DWORD)g_keywords;
-        if (write_code(KEYWORD_TABLE_PUSH + 1, &imm, 4)) tlog("OK keywords (%d stock + 8)", n);
+        if (write_code(KEYWORD_TABLE_PUSH + 1, &imm, 4)) tlog("OK keywords (%d stock + 9)", n);
     } else if (n != 207) tlog("SKIP keywords: table has %d entries, expected 207", n);
 
     if (expect(ASSIGN_CALL, "e8 fe 97 f8 ff", "behaviour assignment") && write_call(ASSIGN_CALL, assign_wrapper))
@@ -758,6 +815,22 @@ static void apply_patches(void)
         write_call(SABER_GLOW_CALL, saber_glow_stub) && write_call(SABER_STREAK_CALL, saber_streak_stub))
         tlog("OK blade styles");
 
+    {
+        static const struct { DWORD at; const char *bytes; void *stub; } geo[] = {
+            { 0x0041A919, "66 3b 0d dc 18 7f 00", geo_cmp_cx },  /* model layers            */
+            { 0x0041C0D3, "66 3b 0d dc 18 7f 00", geo_cmp_cx },  /* armed roll at spawn     */
+            { 0x0041CB0E, "66 3b 05 dc 18 7f 00", geo_cmp_ax },  /* armed roll at spawn     */
+            { 0x00429B8F, "66 3b 0d dc 18 7f 00", geo_cmp_cx },  /* unarmed attack          */
+            { 0x004B3D51, "66 3b 05 dc 18 7f 00", geo_cmp_ax },  /* Geonosian bolt if armed */
+            { 0x004CB2A2, "66 3b 05 dc 18 7f 00", geo_cmp_ax },  /* no firing in flight     */
+        };
+        static const unsigned char nops[2] = { 0x90, 0x90 };
+        int ok = 1;
+        for (k = 0; k < 6; k++) ok &= expect(geo[k].at, geo[k].bytes, "geonosian check");
+        for (k = 0; ok && k < 6; k++) ok &= write_call(geo[k].at, geo[k].stub) && write_code(geo[k].at + 5, nops, 2);
+        if (ok) tlog("OK geonosian variant (6 checks)");
+    }
+
     if (g_arena.enabled) {
         if (expect(ARENA_CALL_1, "e8 de f7 ff ff", "arena 1") && expect(ARENA_CALL_2, "e8 e2 e9 ff ff", "arena 2") &&
             expect(ARENA_PICK, "85 f6 0f 84 b0 00 00 00", "arena pick") &&
@@ -789,6 +862,7 @@ static void reset_state(const char *dir)
     memset(g_jump, -1, sizeof g_jump);
     memset(g_enter, -1, sizeof g_enter);
     memset(g_blades, -1, sizeof g_blades);
+    memset(g_geonosian, -1, sizeof g_geonosian);
     for (i = 0; i < MAX_DEFS; i++) g_bullet[i] = -1;
     memset(&g_arena, 0, sizeof g_arena);
     g_patched = 0;

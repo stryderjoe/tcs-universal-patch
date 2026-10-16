@@ -104,7 +104,11 @@ Projectile type is chosen by `FUN_00407E40(character, default)`, a chain of iden
 
 The Geonosian is handled before the picker: `FUN_004B3D40` fires type `0x13` "geonosian" when the
 character is `geonosian` and instance `+0xEF0 & 0x200` is set. That bit is rolled 50/50 at spawn
-(`FUN_0041BC20`), and `FUN_0041A5B0` switches its model layers with it. Projectile table: 44 entries of
+(`FUN_0041BC20`), and `FUN_0041A5B0` switches its model layers with it.
+The Geonosian ID is compared at exactly six places, each a 7-byte `cmp ax|cx, word ptr [0x007F18DC]`:
+`0x0041A919` (model layers), `0x0041C0D3` and `0x0041CB0E` (the armed roll in the two spawn paths),
+`0x00429B8F` (unarmed attack, `FUN_00429B80`), `0x004B3D51` (bolt `0x13` when armed) and `0x004CB2A2` (an
+AI/input path that holds fire while it flies). Projectile table: 44 entries of
 `0xA4` bytes at `0x007EF388`, name first (red, green, blue, trainingremote, walker, spaceship, xwing,
 falcon, ..., geonosian `0x13`, cannon, ..., bobafett `0x1A`, ewokpebble, wicketpebble, boulder,
 ewoktorpedo, wickettorpedo, jedistarfighter, ..., bullet `0x2A`, spear `0x2B`).
