@@ -289,7 +289,7 @@ def main():
 
     # --- start-up path ---------------------------------------------------------------------------------------
     m = Machine(INI)
-    stock = {a: m.rbytes(a, 5) for a in (0x5896D6, 0x48ABFD, 0x407E40, 0x55E470, 0x55F360, 0x4DEABD, 0x4DF8B9, 0x454593, 0x4B6100, 0x4B6052, 0x41EACD, 0x41EB4D, 0x42C72A, 0x4B1D99, 0x41A919, 0x41C0D3, 0x41CB0E, 0x429B8F, 0x4B3D51, 0x4CB2A2)}
+    stock = {a: m.rbytes(a, 5) for a in (0x5896D6, 0x48ABFD, 0x407E40, 0x55E470, 0x55F360, 0x4DEABD, 0x4DF8B9, 0x454593, 0x4B6100, 0x4B6052, 0x41EACD, 0x41EB4D, 0x42C72A, 0x4B1D99, 0x41A919, 0x41C0D3, 0x41CB0E, 0x429B8F, 0x4B3D51, 0x4CB2A2, 0x4B4B35, 0x4BFDCA)}
     real = m.r32(IAT_GETCOMMANDLINEA)
     check("installs on the supported build", m.install() == 1)
     hooked = m.r32(IAT_GETCOMMANDLINEA)
@@ -304,7 +304,7 @@ def main():
 
     got = m.start_game_code()
     changed = [hex(a) for a, b in stock.items() if m.rbytes(a, 5) != b]
-    check("decrypted code: patches every site", len(changed) == 20, ", ".join(changed))
+    check("decrypted code: patches every site", len(changed) == 22, ", ".join(changed))
     check("restores the real GetCommandLineA and returns its result",
           m.r32(IAT_GETCOMMANDLINEA) == real and m.cstr(got) == "LEGOStarWarsSaga.exe")
 
@@ -312,9 +312,9 @@ def main():
     names = []
     while m.r32(table + 8 * len(names)):
         names.append(m.cstr(m.r32(table + 8 * len(names))))
-    check("keyword table: 207 stock keywords kept, 9 added, terminated",
-          len(names) == 216 and names[:207] == [m.cstr(m.r32(0x804248 + 8 * i)) for i in range(207)]
-          and names[207:] == ["behaviour", "behavior", "bullet", "pull_levers", "drive_vehicles", "can_jump", "enter_vehicles", "blade_style", "geonosian_variant"], f"{len(names)} entries")
+    check("keyword table: 207 stock keywords kept, 10 added, terminated",
+          len(names) == 217 and names[:207] == [m.cstr(m.r32(0x804248 + 8 * i)) for i in range(207)]
+          and names[207:] == ["behaviour", "behavior", "bullet", "pull_levers", "drive_vehicles", "can_jump", "enter_vehicles", "blade_style", "geonosian_variant", "weapon_always_out"], f"{len(names)} entries")
 
     other = Machine(INI, timestamp=0x12345678)
     check("refuses another build (timestamp)", other.install() == 0 and other.r32(IAT_GETCOMMANDLINEA) != 0
@@ -328,7 +328,7 @@ def main():
             m.set_id(name, idx[name])
         except KeyError:
             pass
-    parse_keywords(m, idx["mydroid"], 'hit_points=4\nbehaviour="standard"\nbullet="geonosian"\npull_levers\ndrive_vehicles\ncan_jump\nenter_vehicles\nblade_style="double"\ngeonosian_variant\n')
+    parse_keywords(m, idx["mydroid"], 'hit_points=4\nbehaviour="standard"\nbullet="geonosian"\npull_levers\ndrive_vehicles\ncan_jump\nenter_vehicles\nblade_style="double"\ngeonosian_variant\nweapon_always_out\n')
     parse_keywords(m, idx["myguard"], 'weapon_locator=0\nbehaviour="jedi"\nbullet=43\npull_levers off\ndrive_vehicles off\nblade_style=staff\n')
     hp = m.rbytes(m.r32(0x93B284) + idx["mydroid"] * 0x120 + 0xF4, 1)[0]
     check("stock keyword still parsed next to the new ones (hit_points=4)", hp == 4, f"hit_points {hp}")
@@ -480,6 +480,33 @@ def main():
           all(z and k for z, k in results["geonosian"]) and all(not z and k for z, k in results["hansolo"]))
     check("geonosian_variant: an opted-in character matches at all six checks",
           all(z and k for z, k in results["mydroid"]))
+
+    # --- weapon always out: the last name test before FUN_0058D8B0 ------------------------------------------------
+    m.set_id("captaintarpals", idx["shaakti"])
+
+    def weapon_out_zf(name):
+        m.run(0x4B4B35, 0x4B4B3C, regs={UC_X86_REG_EAX: 0xABCD0000 | idx[name], UC_X86_REG_EDX: 0x1234})
+        kept = m.uc.reg_read(UC_X86_REG_EAX) == 0xABCD0000 | idx[name] and m.uc.reg_read(UC_X86_REG_EDX) == 0x1234
+        return bool(m.uc.reg_read(UC_X86_REG_EFLAGS) & 0x40) and kept, kept
+    check("weapon always out: Tarpals still matches, others do not, an opted-in character does",
+          weapon_out_zf("shaakti")[0] and not weapon_out_zf("hansolo")[0] and weapon_out_zf("hansolo")[1]
+          and weapon_out_zf("mydroid")[0])
+
+    # --- Ewok rock sounds in the level preload ---------------------------------------------------------------------
+    def rock_sounds(name):
+        stops = []
+
+        def stop(uc, address, size, user):
+            stops.append(address)
+            uc.emu_stop()
+        hs = [m.uc.hook_add(UC_HOOK_CODE, stop, begin=a, end=a) for a in (0x4BFDE0, 0x4BFE15)]
+        m.run(0x4BFDCA, 0x4C0000, regs={UC_X86_REG_EBX: idx[name]})
+        for h in hs:
+            m.uc.hook_del(h)
+        return stops[:1] == [0x4BFDE0]
+    check("rock sounds: loaded for Ewok and for a character firing Ewok pebbles, not for others",
+          rock_sounds("ewok") and rock_sounds("battledroid") and not rock_sounds("hansolo")
+          and not rock_sounds("mydroid"))
 
     # --- Geonosis arena --------------------------------------------------------------------------------------------
     slots = 0x882BD0

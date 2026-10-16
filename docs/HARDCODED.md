@@ -63,7 +63,9 @@ A character that is not `jedi` gets the Jedi melee routine only by identity: `bo
 `FUN_00414400` after the flag rules. With a weapon in B`+0xEC` the Jedi routine draws that weapon instead
 of a saber (`FUN_0041DAD0`), and the streak is drawn from `streak` and `streak_N_locators`
 (`FUN_004A0BC0`, skipped when `streak` is unset). `FUN_004A0900` adds MagnaGuard-only streak toggles on two
-attack moves. Hilt choice in `FUN_00418FB0` is also by identity (Maul, Dooku).
+attack moves. Hilt choice in `FUN_00418FB0` is also by identity (Maul, Dooku). The standard routine keeps the weapon
+permanently drawn (`FUN_0058D8B0`) for gamorreanguard, ewok, wicket and captaintarpals, by name
+(`0x004B4B0E`..`0x004B4B3C`).
 
 How many blades are drawn, lit and streaked is decided by name in three functions: `FUN_0041DAD0` (hilt and
 blades, called at `0x0041EACD` and `0x0041EB4D`), `FUN_0049F850` (per-blade glow, `0x0042C72A`) and
@@ -105,6 +107,9 @@ Projectile type is chosen by `FUN_00407E40(character, default)`, a chain of iden
 The Geonosian is handled before the picker: `FUN_004B3D40` fires type `0x13` "geonosian" when the
 character is `geonosian` and instance `+0xEF0 & 0x200` is set. That bit is rolled 50/50 at spawn
 (`FUN_0041BC20`), and `FUN_0041A5B0` switches its model layers with it.
+Rock sounds: the level preload `FUN_004BDE10` loads `wpn_bomb_drop` and `exp_bomb` only when ewok or wicket
+is in the level (`0x004BFDCA`), so another character firing Ewok pebbles there would be silent.
+
 The Geonosian ID is compared at exactly six places, each a 7-byte `cmp ax|cx, word ptr [0x007F18DC]`:
 `0x0041A919` (model layers), `0x0041C0D3` and `0x0041CB0E` (the armed roll in the two spawn paths),
 `0x00429B8F` (unarmed attack, `FUN_00429B80`), `0x004B3D51` (bolt `0x13` when armed) and `0x004CB2A2` (an

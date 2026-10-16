@@ -12,6 +12,7 @@
  *                                   Grievous or Dooku (the game decides these by name)
  *   geonosian_variant               treated as a Geonosian wherever the game checks for one: 50/50 armed at
  *                                   spawn, Geonosian bolts and armed/unarmed layers, no firing in flight
+ *   weapon_always_out               keep the weapon drawn, as the Gamorrean guard, Ewoks and Tarpals do
  *   can_jump, enter_vehicles        give a character on the droid routine the jump and vehicle entry the
  *                                   standard routine has, while keeping everything else droid-like
  *   [arena] in TCSUniversal.ini     which Jedi the Geonosis arena spawns, and how many at once
@@ -80,6 +81,12 @@ static const fn_void       assign_behaviours = (fn_void)0x00414400;
 #define ID_BODYGUARD_ADDR  0x007F187Cu
 #define ID_DOOKU_ADDR      0x007F1A08u
 #define ID_GEONOSIAN_ADDR  0x007F18DCu   /* six "cmp ax|cx, [ID_geonosian]" sites below     */
+#define WEAPON_OUT_CMP     0x004B4B35u   /* cmp ax,[ID_captaintarpals]; jne: last of the weapon-out names */
+#define ID_TARPALS_ADDR    0x007F1874u
+#define EWOK_SOUNDS_TEST   0x004BFDCAu   /* "is it ewok or wicket" before preloading the rock sounds  */
+#define EWOK_SOUNDS_SKIP   0x004BFE15u
+#define ID_EWOK_ADDR       0x007F1924u
+#define ID_WICKET_ADDR     0x007F1928u
 #define BULLET_TABLE       0x007EF388u   /* 0xA4 bytes per type, name first */
 #define BULLET_COUNT       0x2C
 
@@ -94,6 +101,7 @@ static signed char g_jump[MAX_DEFS];
 static signed char g_enter[MAX_DEFS];
 static signed char g_blades[MAX_DEFS];
 static signed char g_geonosian[MAX_DEFS];
+static signed char g_weapon_out[MAX_DEFS];
 static FILE *g_log;
 static int g_patched;
 static FARPROC g_real_GetCommandLineA;
@@ -295,6 +303,7 @@ static void __cdecl kw_blade_style(void *ctx)
     if ((k = blade_style_from_name(name)) >= 0) g_blades[i] = (signed char)k;
     else tlog("character %d: unknown blade_style \"%s\"", i, name);
 }
+static void __cdecl kw_weapon_always_out(void *ctx) { read_switch(ctx, g_weapon_out); }
 static void __cdecl kw_geonosian_variant(void *ctx) { read_switch(ctx, g_geonosian); }
 static void __cdecl kw_can_jump(void *ctx) { read_switch(ctx, g_jump); }
 static void __cdecl kw_enter_vehicles(void *ctx) { read_switch(ctx, g_enter); }
@@ -322,6 +331,8 @@ static void apply_value(int i, const char *key, const char *val)
     } else if (!_stricmp(key, "blade_style")) {
         if ((t = blade_style_from_name(val)) >= 0) g_blades[i] = (signed char)t;
         else tlog("ini: unknown blade_style \"%s\"", val);
+    } else if (!_stricmp(key, "weapon_always_out")) {
+        g_weapon_out[i] = (char)(_stricmp(val, "off") != 0);
     } else if (!_stricmp(key, "geonosian_variant")) {
         g_geonosian[i] = (char)(_stricmp(val, "off") != 0);
     } else if (!_stricmp(key, "can_jump")) {
@@ -653,6 +664,57 @@ static __declspec(naked) void geo_cmp_cx(void)
     }
 }
 
+/* ------------------------------------------------------------------ weapon always out */
+static int __cdecl weapon_out_like(int id)
+{
+    return id >= 0 && id < MAX_DEFS && g_weapon_out[id] > 0;
+}
+
+/* replaces "cmp ax, word ptr [ID_captaintarpals]" (the jne after it stays): ZF set for Tarpals or opted in */
+static __declspec(naked) void weapon_out_cmp(void)
+{
+    __asm {
+        cmp ax, word ptr ds:[ID_TARPALS_ADDR]
+        je done
+        push eax
+        push ecx
+        push edx
+        movsx eax, ax
+        push eax
+        call weapon_out_like
+        add esp, 4
+        cmp eax, 1
+        pop edx
+        pop ecx
+        pop eax
+    done:
+        ret
+    }
+}
+
+/* ------------------------------------------------------------------ Ewok rock sounds */
+/* The level preload loads the rock sounds only for Ewok and Wicket; also load them for any character
+   whose bullet is one of the Ewok types (0x1B to 0x1F). */
+static int __cdecl needs_rock_sounds(int id)
+{
+    if (id == *(short *)ID_EWOK_ADDR || id == *(short *)ID_WICKET_ADDR) return 1;
+    return id >= 0 && id < MAX_DEFS && g_bullet[id] >= 0x1B && g_bullet[id] <= 0x1F;
+}
+
+/* replaces the two compares (character ID in EBX); ZF set = load the sounds */
+static __declspec(naked) void rock_sounds_test(void)
+{
+    __asm {
+        push edx
+        push ebx
+        call needs_rock_sounds
+        add esp, 4
+        pop edx
+        cmp eax, 1
+        ret
+    }
+}
+
 /* ------------------------------------------------------------------ arena */
 #define ARENA_SLOT_TYPE(s)  (*(int *)((char *)(s) + 0x10))
 #define ARENA_SLOT_FLAGS(s) (*(unsigned *)((char *)(s) + 0x5C))
@@ -770,15 +832,15 @@ static void apply_patches(void)
             { "bullet", kw_bullet }, { "pull_levers", kw_pull_levers },
             { "drive_vehicles", kw_drive_vehicles }, { "can_jump", kw_can_jump },
             { "enter_vehicles", kw_enter_vehicles }, { "blade_style", kw_blade_style },
-            { "geonosian_variant", kw_geonosian_variant },
+            { "geonosian_variant", kw_geonosian_variant }, { "weapon_always_out", kw_weapon_always_out },
         };
         memcpy(g_keywords, (void *)KEYWORD_TABLE, n * 8);
-        for (k = 0; k < 9; k++) {
+        for (k = 0; k < 10; k++) {
             g_keywords[2 * (n + k)] = (DWORD)mine[k].name;
             g_keywords[2 * (n + k) + 1] = (DWORD)mine[k].fn;
         }
         imm = (DWORD)g_keywords;
-        if (write_code(KEYWORD_TABLE_PUSH + 1, &imm, 4)) tlog("OK keywords (%d stock + 9)", n);
+        if (write_code(KEYWORD_TABLE_PUSH + 1, &imm, 4)) tlog("OK keywords (%d stock + 10)", n);
     } else if (n != 207) tlog("SKIP keywords: table has %d entries, expected 207", n);
 
     if (expect(ASSIGN_CALL, "e8 fe 97 f8 ff", "behaviour assignment") && write_call(ASSIGN_CALL, assign_wrapper))
@@ -831,6 +893,19 @@ static void apply_patches(void)
         if (ok) tlog("OK geonosian variant (6 checks)");
     }
 
+    if (expect(WEAPON_OUT_CMP, "66 3b 05 74 18 7f 00 75 09", "weapon always out")) {
+        static const unsigned char nops[2] = { 0x90, 0x90 };
+        if (write_call(WEAPON_OUT_CMP, weapon_out_cmp) && write_code(WEAPON_OUT_CMP + 5, nops, 2))
+            tlog("OK weapon always out");
+    }
+    if (expect(EWOK_SOUNDS_TEST, "0f bf 05 24 19 7f 00 3b d8 74 0b 0f bf 0d 28 19 7f 00 3b d9 75 35", "rock sounds")) {
+        /* call stub; jne skip; then nops up to the original preload at +0x16 */
+        unsigned char tail[17] = { 0x75, (unsigned char)(EWOK_SOUNDS_SKIP - (EWOK_SOUNDS_TEST + 7)) };
+        memset(tail + 2, 0x90, 15);
+        if (write_call(EWOK_SOUNDS_TEST, rock_sounds_test) && write_code(EWOK_SOUNDS_TEST + 5, tail, 17))
+            tlog("OK rock sounds");
+    }
+
     if (g_arena.enabled) {
         if (expect(ARENA_CALL_1, "e8 de f7 ff ff", "arena 1") && expect(ARENA_CALL_2, "e8 e2 e9 ff ff", "arena 2") &&
             expect(ARENA_PICK, "85 f6 0f 84 b0 00 00 00", "arena pick") &&
@@ -863,6 +938,7 @@ static void reset_state(const char *dir)
     memset(g_enter, -1, sizeof g_enter);
     memset(g_blades, -1, sizeof g_blades);
     memset(g_geonosian, -1, sizeof g_geonosian);
+    memset(g_weapon_out, -1, sizeof g_weapon_out);
     for (i = 0; i < MAX_DEFS; i++) g_bullet[i] = -1;
     memset(&g_arena, 0, sizeof g_arena);
     g_patched = 0;
