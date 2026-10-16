@@ -8,6 +8,8 @@
  *   bullet="ewokpebble"     which projectile type the character fires (name or number)
  *   pull_levers / pull_levers off   allow or forbid pulling levers, whatever the categories say
  *   drive_vehicles / drive_vehicles off   allow or forbid the scripted vehicle take-over (droids are refused)
+ *   can_jump, enter_vehicles        give a character on the droid routine the jump and vehicle entry the
+ *                                   standard routine has, while keeping everything else droid-like
  *   [arena] in TCSUniversal.ini     which Jedi the Geonosis arena spawns, and how many at once
  *   [characters] in TCSUniversal.ini   the same keywords by character name, without editing game files
  *
@@ -61,6 +63,10 @@ static const fn_void       assign_behaviours = (fn_void)0x00414400;
 #define ARENA_CALL_2       0x004DF8B9u
 #define TAKEOVER_TEST      0x00454593u   /* mov ecx,[edx+54]; test byte [ecx+4],10; jne 4545C3 */
 #define TAKEOVER_REFUSED   0x004545C3u
+#define DROID_JUMP_ARGS    0x004B6100u   /* six pushes for the jump call in the droid routine */
+#define DROID_JUMP_CALL    0x004B610Fu   /* push esi; call FUN_00562570                         */
+#define DROID_AFTER_JUMP   0x004B6052u   /* push esi; call FUN_0049D720 (droid routine)          */
+#define VEHICLE_ENTRY      0x00488770u
 #define BULLET_TABLE       0x007EF388u   /* 0xA4 bytes per type, name first */
 #define BULLET_COUNT       0x2C
 
@@ -71,6 +77,8 @@ static signed char g_behaviour[MAX_DEFS];
 static short       g_bullet[MAX_DEFS];
 static signed char g_levers[MAX_DEFS];
 static signed char g_drive[MAX_DEFS];
+static signed char g_jump[MAX_DEFS];
+static signed char g_enter[MAX_DEFS];
 static FILE *g_log;
 static int g_patched;
 static FARPROC g_real_GetCommandLineA;
@@ -233,17 +241,22 @@ static void __cdecl kw_pull_levers(void *ctx)
     }
 }
 
-static void __cdecl kw_drive_vehicles(void *ctx)
+/* a bare flag, optionally followed by "off" */
+static void read_switch(void *ctx, signed char *table)
 {
     char word[16];
     int i = parse_index();
     if (i < 0) return;
-    g_drive[i] = 1;
+    table[i] = 1;
     if (next_token(ctx)) {
         unquote(TOKEN(ctx), word, sizeof word);
-        if (!_stricmp(word, "off")) g_drive[i] = 0;
+        if (!_stricmp(word, "off")) table[i] = 0;
     }
 }
+
+static void __cdecl kw_drive_vehicles(void *ctx) { read_switch(ctx, g_drive); }
+static void __cdecl kw_can_jump(void *ctx) { read_switch(ctx, g_jump); }
+static void __cdecl kw_enter_vehicles(void *ctx) { read_switch(ctx, g_enter); }
 
 /* the original table plus ours; built at patch time */
 static DWORD g_keywords[2 * 260];
@@ -265,6 +278,10 @@ static void apply_value(int i, const char *key, const char *val)
         g_levers[i] = (char)(_stricmp(val, "off") != 0);
     } else if (!_stricmp(key, "drive_vehicles")) {
         g_drive[i] = (char)(_stricmp(val, "off") != 0);
+    } else if (!_stricmp(key, "can_jump")) {
+        g_jump[i] = (char)(_stricmp(val, "off") != 0);
+    } else if (!_stricmp(key, "enter_vehicles")) {
+        g_enter[i] = (char)(_stricmp(val, "off") != 0);
     } else tlog("ini: unknown setting \"%s\"", key);
 }
 
@@ -369,6 +386,74 @@ static __declspec(naked) void takeover_stub(void)
         pop edx
         pop ecx
         pop eax
+        ret
+    }
+}
+
+/* ------------------------------------------------------------------ droid routine: jump and vehicle entry */
+static int __cdecl switch_on(signed char *table, char *chr)
+{
+    int id = CHAR_ID(chr);
+    return id >= 0 && id < MAX_DEFS && table[id] > 0;
+}
+
+/* replaces the droid routine's jump arguments (button 0, 0, flags 0x80 = no jump); the live registers
+   hold esi = character, ebx = jump held, edi = jump pressed, as on the astromech and gonk paths */
+static __declspec(naked) void droid_jump_stub(void)
+{
+    __asm {
+        push eax
+        push ecx
+        push edx
+        push esi
+        push offset g_jump
+        call switch_on
+        add esp, 8
+        test eax, eax
+        pop edx
+        pop ecx
+        pop eax
+        jnz can_jump
+        push -1
+        push 0
+        push 0
+        push 0x80
+        push 0
+        push 0
+        jmp done
+    can_jump:
+        push -1
+        push 0
+        push 0
+        push 8              /* what the standard routine passes */
+        push edi
+        push ebx
+    done:
+        push DROID_JUMP_CALL
+        ret
+    }
+}
+
+typedef void (__cdecl *fn_char_void)(void *chr);
+typedef void (__cdecl *fn_vehicle)(void *chr, unsigned buttons);
+
+/* called instead of FUN_0049D720 in the droid routine; adds the vehicle entry the standard routine makes */
+static void __cdecl droid_after_jump(char *chr)
+{
+    ((fn_char_void)0x0049D720)(chr);
+    if (switch_on(g_enter, chr)) {
+        unsigned pressed = *(unsigned *)(*(char **)(chr + 0xCA4) + 8);
+        ((fn_vehicle)VEHICLE_ENTRY)(chr, pressed & *(unsigned *)0x00802284);
+    }
+}
+
+/* replaces "push esi; call FUN_0049D720" with "call stub; push esi" (the routine's add esp,4 stays right) */
+static __declspec(naked) void droid_after_stub(void)
+{
+    __asm {
+        push esi
+        call droid_after_jump
+        add esp, 4
         ret
     }
 }
@@ -488,15 +573,16 @@ static void apply_patches(void)
         static const struct { const char *name; void *fn; } mine[] = {
             { "behaviour", kw_behaviour }, { "behavior", kw_behaviour },
             { "bullet", kw_bullet }, { "pull_levers", kw_pull_levers },
-            { "drive_vehicles", kw_drive_vehicles },
+            { "drive_vehicles", kw_drive_vehicles }, { "can_jump", kw_can_jump },
+            { "enter_vehicles", kw_enter_vehicles },
         };
         memcpy(g_keywords, (void *)KEYWORD_TABLE, n * 8);
-        for (k = 0; k < 5; k++) {
+        for (k = 0; k < 7; k++) {
             g_keywords[2 * (n + k)] = (DWORD)mine[k].name;
             g_keywords[2 * (n + k) + 1] = (DWORD)mine[k].fn;
         }
         imm = (DWORD)g_keywords;
-        if (write_code(KEYWORD_TABLE_PUSH + 1, &imm, 4)) tlog("OK keywords (%d stock + 5)", n);
+        if (write_code(KEYWORD_TABLE_PUSH + 1, &imm, 4)) tlog("OK keywords (%d stock + 7)", n);
     } else if (n != 207) tlog("SKIP keywords: table has %d entries, expected 207", n);
 
     if (expect(ASSIGN_CALL, "e8 fe 97 f8 ff", "behaviour assignment") && write_call(ASSIGN_CALL, assign_wrapper))
@@ -514,6 +600,17 @@ static void apply_patches(void)
         static const unsigned char tail[4] = { 0x75, 0x29, 0x90, 0x90 };  /* jne 4545C3; nop; nop */
         if (write_call(TAKEOVER_TEST, takeover_stub) && write_code(TAKEOVER_TEST + 5, tail, 4))
             tlog("OK vehicle take-over");
+    }
+
+    if (expect(DROID_JUMP_ARGS, "6a ff 6a 00 6a 00 68 80 00 00 00 6a 00 6a 00 56 e8", "droid jump")) {
+        static const unsigned char nops[10] = { 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90 };
+        if (write_jmp(DROID_JUMP_ARGS, droid_jump_stub) && write_code(DROID_JUMP_ARGS + 5, nops, 10))
+            tlog("OK droid jump");
+    }
+    if (expect(DROID_AFTER_JUMP, "56 e8 c8 76 fe ff 0f b7 86 64 10", "droid vehicle entry")) {
+        static const unsigned char push_esi = 0x56;
+        if (write_call(DROID_AFTER_JUMP, droid_after_stub) && write_code(DROID_AFTER_JUMP + 5, &push_esi, 1))
+            tlog("OK droid vehicle entry");
     }
 
     if (g_arena.enabled) {
@@ -544,6 +641,8 @@ static void reset_state(const char *dir)
     memset(g_behaviour, -1, sizeof g_behaviour);
     memset(g_levers, -1, sizeof g_levers);
     memset(g_drive, -1, sizeof g_drive);
+    memset(g_jump, -1, sizeof g_jump);
+    memset(g_enter, -1, sizeof g_enter);
     for (i = 0; i < MAX_DEFS; i++) g_bullet[i] = -1;
     memset(&g_arena, 0, sizeof g_arena);
     g_patched = 0;

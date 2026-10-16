@@ -11,7 +11,8 @@ usage: python tests/emulate.py [path to the unwrapped exe]
 import os, struct, sys
 import pefile
 from unicorn import Uc, UcError, UC_ARCH_X86, UC_MODE_32, UC_HOOK_CODE, UC_HOOK_MEM_UNMAPPED
-from unicorn.x86_const import UC_X86_REG_EAX, UC_X86_REG_ESP, UC_X86_REG_EIP, UC_X86_REG_ESI, UC_X86_REG_ECX, UC_X86_REG_EDX
+from unicorn.x86_const import (UC_X86_REG_EAX, UC_X86_REG_ESP, UC_X86_REG_EIP, UC_X86_REG_ESI, UC_X86_REG_ECX,
+                                UC_X86_REG_EDX, UC_X86_REG_EBX, UC_X86_REG_EDI)
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 EXE = sys.argv[1] if len(sys.argv) > 1 else os.environ.get(
@@ -288,7 +289,7 @@ def main():
 
     # --- start-up path ---------------------------------------------------------------------------------------
     m = Machine(INI)
-    stock = {a: m.rbytes(a, 5) for a in (0x5896D6, 0x48ABFD, 0x407E40, 0x55E470, 0x55F360, 0x4DEABD, 0x4DF8B9, 0x454593)}
+    stock = {a: m.rbytes(a, 5) for a in (0x5896D6, 0x48ABFD, 0x407E40, 0x55E470, 0x55F360, 0x4DEABD, 0x4DF8B9, 0x454593, 0x4B6100, 0x4B6052)}
     real = m.r32(IAT_GETCOMMANDLINEA)
     check("installs on the supported build", m.install() == 1)
     hooked = m.r32(IAT_GETCOMMANDLINEA)
@@ -303,7 +304,7 @@ def main():
 
     got = m.start_game_code()
     changed = [hex(a) for a, b in stock.items() if m.rbytes(a, 5) != b]
-    check("decrypted code: patches every site", len(changed) == 8, ", ".join(changed))
+    check("decrypted code: patches every site", len(changed) == 10, ", ".join(changed))
     check("restores the real GetCommandLineA and returns its result",
           m.r32(IAT_GETCOMMANDLINEA) == real and m.cstr(got) == "LEGOStarWarsSaga.exe")
 
@@ -311,9 +312,9 @@ def main():
     names = []
     while m.r32(table + 8 * len(names)):
         names.append(m.cstr(m.r32(table + 8 * len(names))))
-    check("keyword table: 207 stock keywords kept, 5 added, terminated",
-          len(names) == 212 and names[:207] == [m.cstr(m.r32(0x804248 + 8 * i)) for i in range(207)]
-          and names[207:] == ["behaviour", "behavior", "bullet", "pull_levers", "drive_vehicles"], f"{len(names)} entries")
+    check("keyword table: 207 stock keywords kept, 7 added, terminated",
+          len(names) == 214 and names[:207] == [m.cstr(m.r32(0x804248 + 8 * i)) for i in range(207)]
+          and names[207:] == ["behaviour", "behavior", "bullet", "pull_levers", "drive_vehicles", "can_jump", "enter_vehicles"], f"{len(names)} entries")
 
     other = Machine(INI, timestamp=0x12345678)
     check("refuses another build (timestamp)", other.install() == 0 and other.r32(IAT_GETCOMMANDLINEA) != 0
@@ -327,7 +328,7 @@ def main():
             m.set_id(name, idx[name])
         except KeyError:
             pass
-    parse_keywords(m, idx["mydroid"], 'hit_points=4\nbehaviour="standard"\nbullet="geonosian"\npull_levers\ndrive_vehicles\n')
+    parse_keywords(m, idx["mydroid"], 'hit_points=4\nbehaviour="standard"\nbullet="geonosian"\npull_levers\ndrive_vehicles\ncan_jump\nenter_vehicles\n')
     parse_keywords(m, idx["myguard"], 'weapon_locator=0\nbehaviour="jedi"\nbullet=43\npull_levers off\ndrive_vehicles off\n')
     hp = m.rbytes(m.r32(0x93B284) + idx["mydroid"] * 0x120 + 0xF4, 1)[0]
     check("stock keyword still parsed next to the new ones (hit_points=4)", hp == 4, f"hit_points {hp}")
@@ -378,6 +379,47 @@ def main():
           not takeover("battledroid_geonosian") and takeover("hansolo") and not takeover("ig88"))
     check("drive_vehicles / drive_vehicles off override the droid test",
           takeover("mydroid") and not takeover("myguard"))
+
+    # --- droid routine: jump arguments and vehicle entry ---------------------------------------------------------
+    def droid_jump_args(name):
+        inst = m.make_instance(idx[name])
+        m.run(0x4B6100, 0x4B6110, regs={UC_X86_REG_ESI: inst, UC_X86_REG_EBX: 0x11, UC_X86_REG_EDI: 0x22})
+        sp = m.uc.reg_read(UC_X86_REG_ESP)
+        return [m.r32(sp + 4 * k) for k in range(7)], inst
+    args, inst = droid_jump_args("battledroid_geonosian")
+    check("droid routine stock: jump called with no buttons and flag 0x80",
+          args == [inst, 0, 0, 0x80, 0, 0, 0xFFFFFFFF], " ".join(f"{a:X}" for a in args))
+    args, inst = droid_jump_args("mydroid")
+    check("can_jump: the droid routine passes the jump buttons and the standard flag 8",
+          args == [inst, 0x11, 0x22, 8, 0, 0, 0xFFFFFFFF], " ".join(f"{a:X}" for a in args))
+
+    def droid_vehicle_entry(name):
+        inst = m.make_instance(idx[name])
+        ctl = m.alloc(0x40)
+        m.w32(ctl + 8, 0xFFFFFFFF)  # every button pressed
+        m.w32(inst + 0xCA4, ctl)
+        seen = []
+
+        def fake(uc, address, size, user):  # stand in for the two game calls; record their arguments
+            sp = uc.reg_read(UC_X86_REG_ESP)
+            seen.append((address, m.r32(sp + 4), m.r32(sp + 8)))
+            uc.reg_write(UC_X86_REG_ESP, sp + 4)
+            uc.reg_write(UC_X86_REG_EIP, m.r32(sp))
+        hooks = [m.uc.hook_add(UC_HOOK_CODE, fake, begin=a, end=a) for a in (0x49D720, 0x488770)]
+        sp0 = STACK + STACK_SIZE - 0x1000
+        m.run(0x4B6052, 0x4B6058, regs={UC_X86_REG_ESI: inst})
+        pushed = m.uc.reg_read(UC_X86_REG_ESP) == sp0 - 4 and m.r32(sp0 - 4) == inst
+        for h in hooks:
+            m.uc.hook_del(h)
+        return seen, inst, pushed
+    seen, inst, pushed = droid_vehicle_entry("battledroid_geonosian")
+    check("droid routine stock: FUN_0049D720 still called, no vehicle entry, stack as before",
+          [a for a, _, _ in seen] == [0x49D720] and seen[0][1] == inst and pushed)
+    seen, inst, pushed = droid_vehicle_entry("mydroid")
+    mask = m.r32(0x802284)
+    check("enter_vehicles: the droid routine also calls vehicle entry with the standard button mask",
+          [a for a, _, _ in seen] == [0x49D720, 0x488770] and seen[1][1:] == (inst, mask) and pushed,
+          f"mask {mask:X}")
 
     # --- Geonosis arena --------------------------------------------------------------------------------------------
     slots = 0x882BD0
