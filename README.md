@@ -76,8 +76,8 @@ limits (including the level `player` list and the level-end unlock list, which s
 follow-ups to the 10 places that handle slots 0 to 7 one by one. A level can then list up to `max` player
 characters. Inventory and reasoning: `docs/PARTY_LIMIT.md`.
 
-Known gap: `FUN_00491D50` gathers the 8 members into a fixed local list (camera-related, it seems), so
-members 9 and up are not part of that calculation. Other arrays sized for 8 may exist that static analysis
+Known gap: `FUN_00491D50` gathers the 8 members' positions into a fixed local list used to switch nearby
+ambient effects on, so members 9 and up do not trigger those (cosmetic). Other arrays sized for 8 may exist that static analysis
 did not find. **Never run in the game:** test with a copy of your save.
 
 ## Checks

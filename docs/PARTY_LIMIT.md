@@ -81,7 +81,9 @@ Not party data after all: `0x00856934` and the bounds `0x00424EA8` / `0x00424F4A
 Follow-ups (stub after the relocated slot-7 instruction, same registers and flags): `0x0041F971` and
 `0x00493011` clear slots 8+, `0x00428796` `+0xEF0 &= edx`, `0x0043FD12` `+0x4B0 &= ecx`, `0x0048FB63` hearts,
 `0x0042C019` `+0xE39 = 4`, `0x0042C10B` `+0x1000`, `0x004EBF43` pool bit mask, `0x0055C30A` / `0x0055C51B`
-`+0xD60`, `+0xDA4`, `+0xEE8`. Not covered: `FUN_00491D50` (8-entry local list).
+`+0xD60`, `+0xDA4`, `+0xEE8`. Not covered: `FUN_00491D50` gathers the members' positions (`+0x19C`) into an 8-entry local list for
+`FUN_00546380` / `FUN_00545A80`, which turn nearby environmental emitters on when any member is close: members
+9 and up do not trigger those ambient effects (cosmetic).
 
 ## Plan
 

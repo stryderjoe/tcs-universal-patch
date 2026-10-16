@@ -81,6 +81,12 @@ with the droid bit. Related: the lever rule `FUN_0055E470` / `FUN_0055F360`, sto
 `+0xEF0 & 0x800000` and read by `CanPullLevers` / `PullLever`, allows jedi, blaster or teleport characters
 and never a droid that is also a bounty hunter.
 
+Vehicle entry itself (`FUN_004874F0`) has no animation gate: a rider without a riding clip falls back to a
+default action. Riding clips are declared per character in its `.TXT` (`anim_start="ride_generic_new_blasterchar"`
+and so on; the `ride_*`, `splat_*` and `throw_*` names in the table at `0x007F2228` load from
+`chars/commonanims`, in `old`/`new` and `jedichar`/`blasterchar` variants), so a new character needs those
+lines to look right on a vehicle or creature.
+
 ### 3. Droids jump only with the bounty_hunter tag
 
 Exactly the droid rule above: `A+4 & 0x1000010 == 0x10` puts a droid on the droid routine, which passes
