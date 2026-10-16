@@ -1,0 +1,5 @@
+out/
+*.obj
+*.exp
+*.lib
+__pycache__/
