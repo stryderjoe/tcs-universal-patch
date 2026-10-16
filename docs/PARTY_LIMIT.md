@@ -81,9 +81,18 @@ Not party data after all: `0x00856934` and the bounds `0x00424EA8` / `0x00424F4A
 Follow-ups (stub after the relocated slot-7 instruction, same registers and flags): `0x0041F971` and
 `0x00493011` clear slots 8+, `0x00428796` `+0xEF0 &= edx`, `0x0043FD12` `+0x4B0 &= ecx`, `0x0048FB63` hearts,
 `0x0042C019` `+0xE39 = 4`, `0x0042C10B` `+0x1000`, `0x004EBF43` pool bit mask, `0x0055C30A` / `0x0055C51B`
-`+0xD60`, `+0xDA4`, `+0xEE8`. Not covered: `FUN_00491D50` gathers the members' positions (`+0x19C`) into an 8-entry local list for
-`FUN_00546380` / `FUN_00545A80`, which turn nearby environmental emitters on when any member is close: members
-9 and up do not trigger those ambient effects (cosmetic).
+`+0xD60`, `+0xDA4`, `+0xEE8`. `FUN_00491D50` gathers the members' positions (`+0x19C`) into an 8-entry stack list for `FUN_00546380` (pushes
+ambient objects away from the nearest member within range) and `FUN_00545A80` (switches emitters on when any
+member is close). Both are written for 8: a loop of 8, an 8-entry flag array on the stack, and unrolled checks
+of entries 1-7. Calling them twice with two batches would let the second call switch off what the first switched
+on. So the call at `0x004922CD` goes through `ambient_list_hook`:
+- When a member occupies slot 8 or above, it refills the 8 entries with the members nearest the viewpoint
+  (`0x00973718`, which both routines already use for culling), in slot order, then calls `FUN_00546380`.
+- `FUN_00545A80` reads the same list.
+- With every member in slots 0-7, the list is untouched.
+
+Members beyond the nearest 8 do not disturb effects near them; with 12 or 16 members spread out, the far ones are
+the least visible.
 
 ## Plan
 

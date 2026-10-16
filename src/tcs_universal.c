@@ -1006,6 +1006,42 @@ static const struct { DWORD at; unsigned char len; const char *bytes; PartyOp op
 };
 #define PARTY_HOOK_COUNT (sizeof(PARTY_HOOKS) / sizeof(PARTY_HOOKS[0]))
 
+/* FUN_00491D50 builds an 8-entry list of member positions (+0x19C) on its stack and passes it to the two
+   ambient-effect routines (FUN_00546380 pushes effects away from the nearest member, FUN_00545A80 switches
+   effects on near any member); both stop at 8. With every member in slots 0-7 the list is left exactly as the
+   game built it. Otherwise it holds the eight members nearest the viewpoint (0x00973718) those routines
+   already cull by, in slot order. The second routine reads the same list. */
+typedef void (__cdecl *fn_list)(DWORD *list);
+static const fn_list ambient_physics = (fn_list)0x00546380;
+
+static void __cdecl ambient_list_hook(DWORD *list)
+{
+    int k, n = 0, idx[16];
+    float dist[16];
+    const float *view = (const float *)0x00973718;
+    for (k = 8; k < g_party_max && !n; k++) n = extra_member(k) != 0;
+    if (n) {
+        n = 0;
+        for (k = 0; k < g_party_max; k++) {
+            DWORD p = extra_member(k);
+            const float *pos = (const float *)(p + 0x19C);
+            float dx, dy, dz;
+            if (!p) continue;
+            dx = pos[0] - view[0]; dy = pos[1] - view[1]; dz = pos[2] - view[2];
+            dist[n] = dx * dx + dy * dy + dz * dz;
+            idx[n++] = k;
+        }
+        while (n > 8) {  /* drop the farthest, keeping slot order */
+            int worst = 0, j;
+            for (j = 1; j < n; j++) if (dist[j] > dist[worst]) worst = j;
+            for (j = worst; j < n - 1; j++) { dist[j] = dist[j + 1]; idx[j] = idx[j + 1]; }
+            n--;
+        }
+        for (k = 0; k < 8; k++) list[k] = k < n ? extra_member(idx[k]) + 0x19C : 0;
+    }
+    ambient_physics(list);
+}
+
 static int install_party_hooks(void)
 {
     unsigned k;
@@ -1056,6 +1092,7 @@ static int apply_party(void)
     }
     for (k = 0; k < PARTY_HOOK_COUNT; k++)
         if (!expect(PARTY_HOOKS[k].at, PARTY_HOOKS[k].bytes, "party hook")) return 0;
+    if (!expect(0x004922C8, "8d 4c 24 28 51 e8 ae 40 0b 00", "party ambient list")) return 0;
     for (k = 0; k < PARTY_REGION_COUNT; k++) total += (region_size(k, n) + 15) & ~15u;
     buf = (char *)VirtualAlloc(NULL, total, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
     if (!buf) { tlog("SKIP party: no memory"); return 0; }
@@ -1079,6 +1116,7 @@ static int apply_party(void)
         write_code(PARTY_BOUNDS[k].at + PARTY_BOUNDS[k].offset, &v, PARTY_BOUNDS[k].size);
     }
     if (!install_party_hooks()) tlog("party: follow-up hooks not installed (no memory)");
+    write_call(0x004922CD, ambient_list_hook);
     tlog("OK party max %d (%u address fields, %u bounds, %u follow-ups); EXPERIMENTAL", n,
          (unsigned)PARTY_RELOC_COUNT, (unsigned)PARTY_BOUND_COUNT, (unsigned)PARTY_HOOK_COUNT);
     return 1;

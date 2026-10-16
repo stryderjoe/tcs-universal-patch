@@ -648,7 +648,8 @@ def main():
         if ins_new.mnemonic != ins_old.mnemonic or ins_new.size != ins_old.size                 or ins_new.op_str.replace(hex(new), hex(old)) != ins_old.op_str:
             decodes = False
     check("no [party] setting: none of the address fields or hook sites changes",
-          all(m.r32(a + o) == old for a, o, old, *_ in relocs))
+          all(m.r32(a + o) == old for a, o, old, *_ in relocs)
+          and all(m.rbytes(a, 10) == stock_img[a - 0x400000:a - 0x400000 + 10] for a in hook_sites | {0x4922C8}))
     sizes = {r: prg.REGIONS[r][4] - prg.REGIONS[r][1] + (n - 8) * prg.REGIONS[r][2] for r in bases}
     spans = sorted((bases[r], bases[r] + sizes[r]) for r in bases)
     apart = all(a2 >= b1 for (a1, b1), (a2, b2) in zip(spans, spans[1:]))
@@ -771,6 +772,44 @@ def main():
     r, kept, fl = hook_run(0x493011, 5, {UC_X86_REG_EAX: 0})
     check("follow-up FUN_00492B40: slots 8..11 cleared with slot 7",
           all(pm.r32(bases[0] + 4 * k) == 0 for k in range(7, 12)))
+
+    # ambient effects: the game's own code from the DAT_00947BBC test through both routine calls
+    def ambient(members, positions, view=(0.0, 0.0, 0.0)):
+        for k in range(12):
+            pm.w32(bases[0] + 4 * k, members[k] if k < len(members) else 0)
+        for p_, pos in zip(members, positions):
+            if p_:
+                pm.uc.mem_write(p_ + 0x19C, struct.pack("<3f", *pos))
+        pm.uc.mem_write(0x973718, struct.pack("<3f", *view))
+        pm.w32(0x947BBC, 1)
+        sp0 = STACK + STACK_SIZE - 0x1000
+        original = [0xA0000000 + k for k in range(8)]  # the list as the game built it on the stack
+        for k, v in enumerate(original):
+            pm.w32(sp0 + 0x28 + 4 * k, v)
+        seen = []
+
+        def fake(uc, address, size, user):
+            sp = uc.reg_read(UC_X86_REG_ESP)
+            arg = pm.r32(sp + 4)
+            seen.append((address, arg, [pm.r32(arg + 4 * k) for k in range(8)]))
+            uc.reg_write(UC_X86_REG_ESP, sp + 4)
+            uc.reg_write(UC_X86_REG_EIP, pm.r32(sp))
+        hooks = [pm.uc.hook_add(UC_HOOK_CODE, fake, begin=a, end=a) for a in (0x546380, 0x545A80)]
+        pm.run(0x4922BF, 0x4922DF)
+        for h in hooks:
+            pm.uc.hook_del(h)
+        return seen, original, sp0 + 0x28
+    people = [pm.alloc(0x1100) for _ in range(12)]
+    seen, original, at = ambient(people[:6] + [0, 0], [(k, 0, 0) for k in range(6)])
+    check("party 12, ambient effects: members only in slots 0-7 leave the game's list untouched",
+          [a for a, _, _ in seen] == [0x546380, 0x545A80] and all(s[1] == at and s[2] == original for s in seen))
+    far = [(100.0 + k, 0, 0) for k in range(8)] + [(k, 0, 0) for k in range(4)]  # slots 8-11 nearest
+    far[1] = (0.5, 0, 0)
+    seen, original, at = ambient(people, far)
+    want = [people[k] + 0x19C for k in (0, 1, 2, 3, 8, 9, 10, 11)]  # 8 nearest, in slot order
+    check("party 12, ambient effects: with members in slots 8-11 both routines get the 8 nearest, in slot order",
+          [a for a, _, _ in seen] == [0x546380, 0x545A80] and all(s[2] == want for s in seen),
+          str([hex(v) for v in seen[0][2]]) if seen else "no calls")
 
     # --- arena off: stock function untouched ------------------------------------------------------------------------
     off = Machine({"arena": {"enabled": "0"}})
