@@ -124,10 +124,13 @@ The limit is 8, enforced twice:
   and `0x0093D510` (stride `0x10`). A character's party slot is the byte at instance `+0x280` (-1 = none),
   used to index further per-player arrays.
 
-Size of a change: 496 instructions address the pointer array and 103 more hold its address as a constant
-(loop pointers and end markers such as `0x0093D810`); the three parallel arrays add 72 more; arrays indexed
-by `+0x280` are not all found by a static scan. Raising the limit means moving every one of those arrays,
-fixing every loop bound and checking each in play. The patch does not attempt it.
+Size of a change (`tools/party_scan.py`, run on your own unwrapped exe, lists every site): 199 functions;
+598 instructions address the party arrays or the level player list (496 the pointer array), 114 hold one
+of their addresses as a constant, 50 compare against an array end (loop end markers such as `0x0093D810`;
+memory reads of `0x0093D810` itself are a separate variable), and those functions contain 39 compares with
+7 or 8. Arrays indexed by a character's party slot (`+0x280`) are not all found by a static scan. Raising the
+limit means moving every one of these arrays, fixing each loop bound and checking it in play. The patch does
+not attempt it.
 
 ### 8. Generic Jedi in the Geonosis arena
 
