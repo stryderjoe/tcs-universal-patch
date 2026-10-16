@@ -182,7 +182,9 @@ The arena (`LEVELS/EPISODE_II/JEDI/JEDI_B`) has its own native module, `0x004DE2
 (pillars, phases, RestrainPadme/Anakin/ObiWan). Ambient fighters live in up to 256 slots of `0x60` bytes at
 `0x00882BD0` (count `(short)0x00888ED0`). When a slot needs a type, `FUN_004DE2A0` (slot in ESI) gives:
 
-- slots without flag 2: `bob`;
+- slots without flag 2: `bob`, the arena's generic background Jedi. `CHARS/GENERICJEDI/BOB.TXT` is
+  `txt_file="kiadimundi"` plus `fixed_layers` and `die_usecurrentlayers`, with its own model `BOB_PC.GHG`;
+  `JEDI.TXT` loads it as `character "BOB" resident`;
 - story mode only (`[0x0093B2A4] == 0`): `luminara` once, then `shaakti` once (one-time bits 1 and 2 of
   `0x00888FB8`, cleared on level/phase reset in `FUN_004DE740`);
 - otherwise 50/50 `battledroid_geonosian` / `geonosian`.
@@ -190,8 +192,9 @@ The arena (`LEVELS/EPISODE_II/JEDI/JEDI_B`) has its own native module, `0x004DE2
 So at most two Jedi appear, each once per reset, and none in Free Play. Phases 1 to 3 add up to 8 scripted
 creatures (`DAT_00888ED2 < 8`); phases 4 to 6 pick 6 objective droids into `0x00888F94`.
 
-## Not resolved
+## Resolved since the first report
 
-- The two projectile IDs `0x007F17D0` / `0x007F17D4` are not in the name table (probably Indiana Jones
-  bonus characters).
-- `bob` (arena slots without flag 2) was not identified.
+- The two projectile IDs `0x007F17D0` / `0x007F17D4` are `indianajones` and `hansolo_indy` in the name table
+  (`0x007F20D8`, `0x007F20C0`): the Indiana Jones bonus characters.
+- `bob` is the generic arena Jedi (above).
+- Variants `0x12` and `0x14` are `critter` and `pod` (variant table above); `behaviour=` can now select them.
