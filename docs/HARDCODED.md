@@ -105,10 +105,23 @@ ewoktorpedo, wickettorpedo, jedistarfighter, ..., bullet `0x2A`, spear `0x2B`).
 
 ### 5. Party limit
 
-The party is a fixed array of 8 instance pointers at `0x0093D7F0`. The builder (at `0x0041FB72`) stops at
-8 (`while (id != -1 && i < 8)`), with parallel 8-slot arrays at `0x0093D630` (stride `0x38`),
-`0x00854898` (stride `0xB4`) and `0x0093D516`.. (stride `0x10`). The array is read in 401 places in 141
-functions. Raising the limit means moving those arrays and every loop bound: not attempted.
+The limit is 8, enforced twice:
+
+- **Level file.** `FUN_00573CA0` reads `character "X" player` lines into a list of `{id, flag}` pairs at
+  `0x00951258` (count `0x00951078`) through `FUN_00573BE0(capacity, id, flag, pairs)` with capacity 8
+  (the call at `0x00574426`); the storage holds 10 pairs including the end marker. When the added character
+  appears in the level's pairing list (the fourth argument), its partner is appended as well and takes one of
+  the 8 places: that is why some levels top out at 7 of their own players.
+- **Party build.** `FUN_0041F940` copies the level list (story, `0x0095107C`) or the Free Play selection
+  (`0x0093D590`) into the party, stopping at 8: party pointers at `0x0093D7F0` (8 x 4 bytes, count
+  `0x0093D818`), with parallel 8-slot arrays at `0x0093D630` (stride `0x38`), `0x00854898` (stride `0xB4`)
+  and `0x0093D510` (stride `0x10`). A character's party slot is the byte at instance `+0x280` (-1 = none),
+  used to index further per-player arrays.
+
+Size of a change: 496 instructions address the pointer array and 103 more hold its address as a constant
+(loop pointers and end markers such as `0x0093D810`); the three parallel arrays add 72 more; arrays indexed
+by `+0x280` are not all found by a static scan. Raising the limit means moving every one of those arrays,
+fixing every loop bound and checking each in play. The patch does not attempt it.
 
 ### 8. Generic Jedi in the Geonosis arena
 
