@@ -336,6 +336,7 @@ static DWORD g_keywords[2 * 260];
 
 /* ------------------------------------------------------------------ behaviour assignment */
 static char g_ini[MAX_PATH];
+static char g_chain[MAX_PATH];  /* [chain] dll: another dinput8 proxy loaded instead of the system one */
 static int install_acts_as(void);
 
 static void apply_value(int i, const char *key, const char *val)
@@ -1086,6 +1087,10 @@ static int apply_party(void)
     DWORD total = 0, at;
     if (n == 8) return 0;
     if (n != 12 && n != 16) { tlog("SKIP party: max must be 12 or 16 (got %d)", n); return 0; }
+    if (g_chain[0]) {  /* the moved party arrays are read at their stock addresses by other patches */
+        tlog("SKIP party: not with [chain] dll (another patch reads the stock party arrays)");
+        return 0;
+    }
     for (k = 0; k < PARTY_RELOC_COUNT; k++)
         if (*(DWORD *)(PARTY_RELOCS[k].addr + PARTY_RELOCS[k].offset) != PARTY_RELOCS[k].old) {
             tlog("SKIP party: address field at %08X does not match this build", PARTY_RELOCS[k].addr);
@@ -1143,6 +1148,16 @@ static void load_config(const char *dir)
     g_arena.max_at_once = GetPrivateProfileIntA("arena", "max_jedi_at_once", 2, ini);
     g_arena.respawn     = GetPrivateProfileIntA("arena", "respawn", 0, ini);
     g_arena.freeplay    = GetPrivateProfileIntA("arena", "in_freeplay", 0, ini);
+    GetPrivateProfileStringA("chain", "dll", "", list, sizeof list, ini);
+    g_chain[0] = 0;
+    if (list[0] && !strpbrk(list, "\\/:") && _stricmp(list, "dinput8.dll") != 0
+        && strlen(dir) + strlen(list) + 2 < MAX_PATH) {
+        strcpy(g_chain, dir);
+        strcat(g_chain, "\\");
+        strcat(g_chain, list);
+    } else if (list[0]) {
+        tlog("SKIP chain: dll must be a file name in the game folder other than dinput8.dll (got %s)", list);
+    }
     GetPrivateProfileStringA("arena", "jedi", "luminara,shaakti", list, sizeof list, ini);
     for (tok = strtok_s(list, ", ", &ctx); tok && g_arena.count < 16; tok = strtok_s(NULL, ", ", &ctx)) {
         strncpy(g_arena.names[g_arena.count], tok, 63);
@@ -1335,6 +1350,13 @@ static fn_DirectInput8Create real_DirectInput8Create;
 
 HRESULT WINAPI Proxy_DirectInput8Create(HINSTANCE inst, DWORD ver, REFIID riid, LPVOID *out, LPVOID outer)
 {
+    if (!real_DirectInput8Create && g_chain[0]) {
+        /* loaded here, outside the loader lock; the chained patch applies itself on this call */
+        HMODULE h = LoadLibraryA(g_chain);
+        real_DirectInput8Create = h ? (fn_DirectInput8Create)GetProcAddress(h, "DirectInput8Create") : NULL;
+        tlog(real_DirectInput8Create ? "chain: loaded %s" : "chain: could not load %s; using the system dinput8",
+             g_chain);
+    }
     if (!real_DirectInput8Create) {
         char sys[MAX_PATH];
         GetSystemDirectoryA(sys, MAX_PATH);

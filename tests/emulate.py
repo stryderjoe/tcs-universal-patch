@@ -45,6 +45,7 @@ class Machine:
         uc.mem_map(HEAP, 0x01000000)
         uc.mem_map(KERNEL32, 0x1000)
         self.heap = HEAP
+        self.loaded, self.di_calls = [], []
         self.cmdline = self.alloc(REAL_CMDLINE)
         self._load(EXE, 0x400000, timestamp)
         self._load(DLL, None, None)
@@ -147,6 +148,9 @@ class Machine:
             "VirtualAlloc": (4, lambda: self.alloc(arg(1))),
             "GetPrivateProfileIntA": (4, lambda: self._ini_int(arg(0), arg(1), arg(2))),
             "GetPrivateProfileStringA": (6, lambda: self._ini_str(*[arg(i) for i in range(5)])),
+            "LoadLibraryA": (1, lambda: (self.loaded.append(self.cstr(arg(0))), 0x10000000)[1]),
+            "GetSystemDirectoryA": (2, lambda: (self.uc.mem_write(arg(0), b"C:\\Windows\\System32\0"), 19)[1]),
+            "DirectInput8Create": (5, lambda: (self.di_calls.append([arg(i) for i in range(5)]), 0)[1]),
         }
         if name not in handlers:
             raise RuntimeError(f"unexpected call to {name}")
@@ -828,6 +832,24 @@ def main():
     check("party 12, ambient effects: with members in slots 8-11 both routines get the 8 nearest, in slot order",
           [a for a, _, _ in seen] == [0x546380, 0x545A80] and all(s[2] == want for s in seen),
           str([hex(v) for v in seen[0][2]]) if seen else "no calls")
+
+    # --- [chain] dll: another dinput8 proxy (for example the four-player patch) ------------------------------------
+    cm = Machine({"chain": {"dll": "fourplayer.dll"}, "party": {"max": "12"}})
+    cm.install()
+    cm.start_game_code()
+    check("[chain] dll: the experimental party size is refused (the other patch reads the stock arrays)",
+          all(cm.r32(a + o) == old for a, o, old, *_ in relocs)
+          and all(cm.rbytes(a, 10) == stock_img[a - 0x400000:a - 0x400000 + 10] for a in hook_sites | {0x4922C8}))
+    cm.call(cm.exports["DirectInput8Create"], 0x400000, 0x800, 0x1234, 0x5678, 0)
+    cm.call(cm.exports["DirectInput8Create"], 0x400000, 0x800, 0x1234, 0x5678, 0)
+    check("[chain] dll: DirectInput8Create loads the named file from the game folder once and forwards every call",
+          cm.loaded == ["C:\\test\\fourplayer.dll"] and cm.di_calls == [[0x400000, 0x800, 0x1234, 0x5678, 0]] * 2,
+          f"{cm.loaded} {len(cm.di_calls)}")
+    bad = Machine({"chain": {"dll": "..\\other\\dinput8.dll"}})
+    bad.install()
+    bad.call(bad.exports["DirectInput8Create"], 0x400000, 0x800, 0x1234, 0x5678, 0)
+    check("[chain] dll with a path, or dinput8.dll itself: ignored, the system dinput8 is used",
+          bad.loaded == ["C:\\Windows\\System32\\dinput8.dll"], str(bad.loaded))
 
     # --- arena off: stock function untouched ------------------------------------------------------------------------
     off = Machine({"arena": {"enabled": "0"}})

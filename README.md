@@ -82,13 +82,34 @@ members in slots 9 and up, that list holds the 8 members nearest the viewpoint t
 otherwise it is left exactly as the game builds it. Other arrays sized for 8 may exist that static analysis did
 not find. **Never run in the game:** test with a copy of your save.
 
+## With another dinput8.dll (four-player patch)
+
+The TCS four-player patch (Loomirr/TTGames-Workshop, `games/tcs/four-player`, draft) is also a
+`dinput8.dll`. To use both, rename that one (for example to `4p_dinput8.dll`) and name it here:
+
+```ini
+[chain]
+dll = 4p_dinput8.dll   ; a file name in the game folder; paths and dinput8.dll itself are refused
+```
+
+This patch then loads it on the game's first `DirectInput8Create` call (outside the loader lock) and passes
+that call and every later one to it instead of the system `dinput8.dll`. The four-player loader treats that
+call as one of its two triggers and patches itself in then; its byte checks see unchanged code, because the
+two patches never write the same bytes: `tools/compat_four_player.py <its src folder>` applies both to copies
+of the game code and compares every changed byte (four-player v0.48: 828 bytes in 219 places; this patch 140
+to 148 bytes in 20 to 22 places; none shared, none within 8 bytes).
+
+`[party] max` is refused while `[chain]` is set: it moves the party arrays the four-player hooks read at
+their stock addresses (26 references) and rewrites 9 address fields the four-player patch also hooks.
+**Not run in the game together.**
+
 ## Checks
 
 `tests/emulate.py` maps your unwrapped `LEGOStarWarsSaga.exe` image and the test build of the DLL
 (`build_test.bat`) into the Unicorn x86 emulator and runs the game's own code through every patched site:
 the start-up hook (including "code still encrypted" and "wrong build"), the extended keyword table, the
 game's real tokenizer on character text, its behaviour assignment, projectile picker, both lever rules, the
-scripted vehicle take-over, the droid routine's jump and vehicle entry, the three saber call sites, the six Geonosian checks, the weapon-out test, the rock-sound preload, the arena picker, `acts_as` at all 528 name checks (and through the game's projectile picker), and for `[party] max = 12` every moved address, the raised bounds, the game's own party builder filling 12 slots, each follow-up, and the ambient-effect list (untouched with 8 or fewer, the 8 nearest otherwise). It also parses all 345 stock character files with the stock and the extended keyword
+scripted vehicle take-over, the droid routine's jump and vehicle entry, the three saber call sites, the six Geonosian checks, the weapon-out test, the rock-sound preload, the arena picker, `acts_as` at all 528 name checks (and through the game's projectile picker), and for `[party] max = 12` every moved address, the raised bounds, the game's own party builder filling 12 slots, each follow-up, and the ambient-effect list (untouched with 8 or fewer, the 8 nearest otherwise), and `[chain]` (the named file loaded once from the game folder, every `DirectInput8Create` passed on, bad names ignored, `[party]` refused). It also parses all 345 stock character files with the stock and the extended keyword
 table and checks that the stored definitions are byte-identical. Needs `pip install unicorn pefile`; the
 exe path comes from the command line or `TCS_EXE`, the character folder from `TCS_CHARS`. No game files are
 included.
