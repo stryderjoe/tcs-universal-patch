@@ -3,7 +3,7 @@
 A small `dinput8.dll` for LEGO Star Wars: The Complete Saga (PC, Steam build) that turns behaviours the
 game ties to particular characters into settings any character can use. Research: `docs/HARDCODED.md`.
 
-**Status: experimental. Checked in an emulator against the game's own code (38 of 38 checks, below); not yet
+**Status: experimental. Checked in an emulator against the game's own code (52 of 52 checks, below); not yet
 run in the game.** Every patch site is checked byte for byte first; anything that does not match is skipped
 and logged. Please report what you see in game.
 
@@ -63,10 +63,22 @@ in_freeplay = 1    ; the stock game spawns none in Free Play
 Jedi named in `[arena]` must be loaded by the level: add them as `resident` in
 `LEVELS/EPISODE_II/JEDI/JEDI.TXT` (stock: only Luminara and Shaak Ti).
 
-## Not covered
+## Party size (experimental)
 
-The party limit of 8 is a fixed array read in 401 places; this patch does not change it (details in
-`docs/HARDCODED.md`).
+```ini
+[party]
+max = 12     ; or 16; anything else leaves the game as it is
+```
+
+Moves every party-sized array to a larger buffer, rewrites the 1,057 places the code holds their addresses
+(table `src/party_table.h`, generated from the exe by `tools/party_reloc_gen.py`), raises 24 loop bounds and
+limits (including the level `player` list and the level-end unlock list, which stops at 7), and adds
+follow-ups to the 10 places that handle slots 0 to 7 one by one. A level can then list up to `max` player
+characters. Inventory and reasoning: `docs/PARTY_LIMIT.md`.
+
+Known gap: `FUN_00491D50` gathers the 8 members into a fixed local list (camera-related, it seems), so
+members 9 and up are not part of that calculation. Other arrays sized for 8 may exist that static analysis
+did not find. **Never run in the game:** test with a copy of your save.
 
 ## Checks
 
@@ -74,7 +86,7 @@ The party limit of 8 is a fixed array read in 401 places; this patch does not ch
 (`build_test.bat`) into the Unicorn x86 emulator and runs the game's own code through every patched site:
 the start-up hook (including "code still encrypted" and "wrong build"), the extended keyword table, the
 game's real tokenizer on character text, its behaviour assignment, projectile picker, both lever rules, the
-scripted vehicle take-over, the droid routine's jump and vehicle entry, the three saber call sites, the six Geonosian checks, the weapon-out test, the rock-sound preload, and the arena picker. It also parses all 345 stock character files with the stock and the extended keyword
+scripted vehicle take-over, the droid routine's jump and vehicle entry, the three saber call sites, the six Geonosian checks, the weapon-out test, the rock-sound preload, the arena picker, and for `[party] max = 12` every moved address, the raised bounds, the game's own party builder filling 12 slots, and each follow-up. It also parses all 345 stock character files with the stock and the extended keyword
 table and checks that the stored definitions are byte-identical. Needs `pip install unicorn pefile`; the
 exe path comes from the command line or `TCS_EXE`, the character folder from `TCS_CHARS`. No game files are
 included.

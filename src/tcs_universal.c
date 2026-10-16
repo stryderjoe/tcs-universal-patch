@@ -16,6 +16,7 @@
  *   can_jump, enter_vehicles        give a character on the droid routine the jump and vehicle entry the
  *                                   standard routine has, while keeping everything else droid-like
  *   [arena] in TCSUniversal.ini     which Jedi the Geonosis arena spawns, and how many at once
+ *   [party] max = 12 or 16           EXPERIMENTAL: a larger party (see docs/PARTY_LIMIT.md)
  *   [characters] in TCSUniversal.ini   the same keywords by character name, without editing game files
  *
  * Supported build: the Steam executable (SteamStub 2.1, sha256 085688e7...) and its unwrapped image
@@ -91,6 +92,8 @@ static const fn_void       assign_behaviours = (fn_void)0x00414400;
 #define BULLET_COUNT       0x2C
 
 #define MAX_DEFS 512
+
+#include "party_table.h"
 
 /* ------------------------------------------------------------------ state */
 static signed char g_behaviour[MAX_DEFS];
@@ -794,6 +797,187 @@ static __declspec(naked) void arena_stub(void)
     }
 }
 
+/* ------------------------------------------------------------------ party size (experimental) */
+/* Moves every party-sized array to a larger buffer, rewrites each address the code holds into them (table
+   generated from the exe by tools/party_reloc_gen.py), and raises the loop bounds. All or nothing: any
+   mismatch leaves the game as it is. */
+static int g_party_max = 8;
+static DWORD g_party_new[sizeof(PARTY_REGIONS) / sizeof(PARTY_REGIONS[0])];
+#define PARTY_REGION_COUNT (sizeof(PARTY_REGIONS) / sizeof(PARTY_REGIONS[0]))
+#define PARTY_RELOC_COUNT (sizeof(PARTY_RELOCS) / sizeof(PARTY_RELOCS[0]))
+
+static const struct { DWORD at; unsigned char size, offset; DWORD stock; int extra; } PARTY_BOUNDS[] = {
+    /* loops over all party slots */
+    { 0x0040C637, 1, 2, 8, 0 }, { 0x00414E6E, 1, 2, 8, 0 }, { 0x00414E7D, 4, 1, 8, 0 },
+    { 0x00427F77, 1, 2, 8, 0 }, { 0x0043C35F, 1, 2, 8, 0 }, { 0x0043D673, 1, 2, 8, 0 },
+    { 0x0043EA04, 1, 2, 8, 0 }, { 0x00447790, 1, 2, 8, 0 }, { 0x004C7E71, 1, 2, 8, 0 },
+    { 0x004CD9FA, 1, 2, 8, 0 }, { 0x004DE8C0, 1, 2, 8, 0 }, { 0x00553942, 1, 2, 8, 0 },
+    { 0x0058EB85, 1, 2, 8, 0 }, { 0x0058EB8C, 1, 2, 8, 0 }, { 0x0059C260, 1, 2, 8, 0 },
+    { 0x0059C278, 1, 2, 8, 0 }, { 0x00404DCA, 4, 1, 8, 0 },
+    /* slot range checks, party build, level player list, unlock list (one less) */
+    { 0x0041B828, 1, 1, 8, 0 }, { 0x0055E30E, 1, 1, 8, 0 }, { 0x0043D469, 1, 2, 8, 0 }, { 0x0041FA95, 1, 2, 8, 0 },
+    { 0x00573E84, 1, 2, 8, 0 }, { 0x00574426, 1, 1, 8, 0 }, { 0x00483B60, 1, 2, 7, -1 },
+};
+#define PARTY_BOUND_COUNT (sizeof(PARTY_BOUNDS) / sizeof(PARTY_BOUNDS[0]))
+
+static DWORD region_size(int r, int slots)
+{
+    return PARTY_REGIONS[r].end - PARTY_REGIONS[r].start
+         + (DWORD)(slots - 8) * PARTY_REGIONS[r].stride;
+}
+
+static DWORD party_map(int r, DWORD old)
+{
+    DWORD off = old - PARTY_REGIONS[r].start;
+    if (r == 0 && off >= 8 * 4) off += (DWORD)(g_party_max - 8) * 4;  /* the two special pointers */
+    return g_party_new[r] + off;
+}
+
+/* ---- code written out once per slot: the same work for slots 8..n-1 ----
+   A hook replaces one instruction that reads or writes slot 7 by absolute address (already relocated).
+   The stub saves flags and registers, runs the extra-slot work with the saved registers, restores them,
+   runs the copied instruction and jumps back. */
+typedef struct { DWORD edi, esi, ebp, esp, ebx, edx, ecx, eax; } Regs;
+typedef void (__cdecl *PartyOp)(Regs *r);
+
+static DWORD extra_member(int k) { return *(DWORD *)(g_party_new[0] + 4 * k); }
+#define FOR_EXTRA(p) for (k = 8; k < g_party_max; k++) if (((p) = extra_member(k)) != 0)
+
+static void __cdecl op_clear_slots(Regs *r)
+{
+    int k;
+    for (k = 8; k < g_party_max; k++) *(DWORD *)(g_party_new[0] + 4 * k) = r->eax;
+}
+static void __cdecl op_and_ef0(Regs *r) { int k; DWORD p; FOR_EXTRA(p) *(DWORD *)(p + 0xEF0) &= r->edx; }
+static void __cdecl op_and_4b0(Regs *r) { int k; DWORD p; FOR_EXTRA(p) *(DWORD *)(p + 0x4B0) &= r->ecx; }
+static void __cdecl op_e39(Regs *r) { int k; DWORD p; (void)r; FOR_EXTRA(p) *(unsigned char *)(p + 0xE39) = 4; }
+static void __cdecl op_1000(Regs *r)
+{
+    int k; DWORD p;
+    FOR_EXTRA(p) *(DWORD *)(p + 0x1000) = (*(unsigned char *)(p + 0x1FC) & (r->ebx & 0xFF)) ? *(DWORD *)0x00751C40 : 0;
+}
+static void __cdecl op_hearts(Regs *r)
+{
+    int k; DWORD p;
+    (void)r;
+    for (k = 8; k < g_party_max; k++)   /* each record's byte 8, then the member's hearts */
+        *(unsigned char *)(g_party_new[1] + 0x10 * k + 8) = *(unsigned char *)0x00802BD4;
+    FOR_EXTRA(p) *(unsigned char *)(p + 0x107F) = *(unsigned char *)(p + 0x107E);
+}
+static void __cdecl op_mask(Regs *r)
+{
+    int k; DWORD p;
+    FOR_EXTRA(p) {
+        unsigned idx = *(unsigned char *)(p + 0x28D);
+        unsigned __int64 bit = (unsigned __int64)r->ebx << (idx & 63);
+        DWORD m = *(DWORD *)0x0087A7F0 + 0xEB8;
+        *(DWORD *)m |= (DWORD)bit;
+        *(DWORD *)(m + 4) |= (DWORD)(bit >> 32);
+    }
+}
+static void __cdecl op_reset(Regs *r)
+{
+    int k; DWORD p;
+    (void)r;
+    FOR_EXTRA(p) {
+        *(DWORD *)(p + 0xD60) = 0;
+        *(DWORD *)(p + 0xDA4) = *(DWORD *)0x00802BE8;
+        *(DWORD *)(p + 0xEE8) = 0;
+    }
+}
+
+static const struct { DWORD at; unsigned char len; const char *bytes; PartyOp op; } PARTY_HOOKS[] = {
+    { 0x0041F971, 5, "a3 0c d8 93 00",       op_clear_slots },  /* party build: clear slots   */
+    { 0x00493011, 5, "a3 0c d8 93 00",       op_clear_slots },  /* FUN_00492B40: clear slots  */
+    { 0x00428796, 7, "83 3d 0c d8 93 00 00", op_and_ef0 },      /* FUN_00427EC0               */
+    { 0x0043FD12, 5, "a1 0c d8 93 00",       op_and_4b0 },      /* FUN_0043E530               */
+    { 0x0048FB63, 5, "a1 0c d8 93 00",       op_hearts },       /* FUN_0048F9B0               */
+    { 0x0042C019, 5, "a1 0c d8 93 00",       op_e39 },          /* FUN_0042B960, first block  */
+    { 0x0042C10B, 5, "a1 0c d8 93 00",       op_1000 },         /* FUN_0042B960, second block */
+    { 0x004EBF43, 5, "a1 0c d8 93 00",       op_mask },         /* block in FUN_004EBDA0      */
+    { 0x0055C30A, 5, "a1 0c d8 93 00",       op_reset },        /* FUN_0055C120               */
+    { 0x0055C51B, 5, "a1 0c d8 93 00",       op_reset },        /* FUN_0055C350               */
+};
+#define PARTY_HOOK_COUNT (sizeof(PARTY_HOOKS) / sizeof(PARTY_HOOKS[0]))
+
+static int install_party_hooks(void)
+{
+    unsigned k;
+    unsigned char *code = (unsigned char *)VirtualAlloc(NULL, 64 * PARTY_HOOK_COUNT, MEM_COMMIT | MEM_RESERVE,
+                                                        PAGE_EXECUTE_READWRITE);
+    if (!code) return 0;
+    for (k = 0; k < PARTY_HOOK_COUNT; k++) {
+        unsigned char *st = code + 64 * k, *q = st, jmp[8];
+        DWORD at = PARTY_HOOKS[k].at, rel;
+        unsigned i;
+        *q++ = 0x9C;  /* pushfd */
+        *q++ = 0x60;  /* pushad */
+        *q++ = 0x54;  /* push esp: the saved registers */
+        *q++ = 0xE8; rel = (DWORD)PARTY_HOOKS[k].op - ((DWORD)q + 4); memcpy(q, &rel, 4); q += 4;
+        *q++ = 0x83; *q++ = 0xC4; *q++ = 0x04;  /* add esp, 4 */
+        *q++ = 0x61;  /* popad */
+        *q++ = 0x9D;  /* popfd */
+        memcpy(q, (void *)at, PARTY_HOOKS[k].len); q += PARTY_HOOKS[k].len;  /* the relocated instruction */
+        *q++ = 0xE9; rel = (at + PARTY_HOOKS[k].len) - ((DWORD)q + 4); memcpy(q, &rel, 4); q += 4;
+        jmp[0] = 0xE9; rel = (DWORD)st - (at + 5); memcpy(jmp + 1, &rel, 4);
+        for (i = 5; i < PARTY_HOOKS[k].len; i++) jmp[i] = 0x90;
+        write_code(at, jmp, PARTY_HOOKS[k].len);
+    }
+    FlushInstructionCache(GetCurrentProcess(), code, 64 * PARTY_HOOK_COUNT);
+    return 1;
+}
+
+static int apply_party(void)
+{
+    unsigned k;
+    int n = g_party_max;
+    char *buf;
+    DWORD total = 0, at;
+    if (n == 8) return 0;
+    if (n != 12 && n != 16) { tlog("SKIP party: max must be 12 or 16 (got %d)", n); return 0; }
+    for (k = 0; k < PARTY_RELOC_COUNT; k++)
+        if (*(DWORD *)(PARTY_RELOCS[k].addr + PARTY_RELOCS[k].offset) != PARTY_RELOCS[k].old) {
+            tlog("SKIP party: address field at %08X does not match this build", PARTY_RELOCS[k].addr);
+            return 0;
+        }
+    for (k = 0; k < PARTY_BOUND_COUNT; k++) {
+        DWORD v = PARTY_BOUNDS[k].size == 1 ? *(unsigned char *)(PARTY_BOUNDS[k].at + PARTY_BOUNDS[k].offset)
+                                            : *(DWORD *)(PARTY_BOUNDS[k].at + PARTY_BOUNDS[k].offset);
+        if (v != PARTY_BOUNDS[k].stock) {
+            tlog("SKIP party: bound at %08X does not match this build", PARTY_BOUNDS[k].at);
+            return 0;
+        }
+    }
+    for (k = 0; k < PARTY_HOOK_COUNT; k++)
+        if (!expect(PARTY_HOOKS[k].at, PARTY_HOOKS[k].bytes, "party hook")) return 0;
+    for (k = 0; k < PARTY_REGION_COUNT; k++) total += (region_size(k, n) + 15) & ~15u;
+    buf = (char *)VirtualAlloc(NULL, total, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+    if (!buf) { tlog("SKIP party: no memory"); return 0; }
+    for (at = (DWORD)buf, k = 0; k < PARTY_REGION_COUNT; k++) {
+        DWORD old_size = PARTY_REGIONS[k].end - PARTY_REGIONS[k].start;
+        g_party_new[k] = at;
+        if (k == 0) {  /* slots, then the specials after slot n-1 */
+            memcpy((void *)at, (void *)PARTY_REGIONS[0].start, 8 * 4);
+            memcpy((void *)(at + n * 4), (void *)(PARTY_REGIONS[0].start + 8 * 4), old_size - 8 * 4);
+        } else {
+            memcpy((void *)at, (void *)PARTY_REGIONS[k].start, old_size);
+        }
+        at += (region_size(k, n) + 15) & ~15u;
+    }
+    for (k = 0; k < PARTY_RELOC_COUNT; k++) {
+        DWORD v = party_map(PARTY_RELOCS[k].region, PARTY_RELOCS[k].old);
+        write_code(PARTY_RELOCS[k].addr + PARTY_RELOCS[k].offset, &v, 4);
+    }
+    for (k = 0; k < PARTY_BOUND_COUNT; k++) {
+        DWORD v = (DWORD)(n + PARTY_BOUNDS[k].extra);
+        write_code(PARTY_BOUNDS[k].at + PARTY_BOUNDS[k].offset, &v, PARTY_BOUNDS[k].size);
+    }
+    if (!install_party_hooks()) tlog("party: follow-up hooks not installed (no memory)");
+    tlog("OK party max %d (%u address fields, %u bounds, %u follow-ups); EXPERIMENTAL", n,
+         (unsigned)PARTY_RELOC_COUNT, (unsigned)PARTY_BOUND_COUNT, (unsigned)PARTY_HOOK_COUNT);
+    return 1;
+}
+
 /* ------------------------------------------------------------------ config */
 static void load_config(const char *dir)
 {
@@ -801,6 +985,7 @@ static void load_config(const char *dir)
     strcpy(ini, dir);
     strcat(ini, "\\TCSUniversal.ini");
     strcpy(g_ini, ini);
+    g_party_max         = GetPrivateProfileIntA("party", "max", 8, ini);
     g_arena.enabled     = GetPrivateProfileIntA("arena", "enabled", 0, ini);
     g_arena.max_at_once = GetPrivateProfileIntA("arena", "max_jedi_at_once", 2, ini);
     g_arena.respawn     = GetPrivateProfileIntA("arena", "respawn", 0, ini);
@@ -905,6 +1090,8 @@ static void apply_patches(void)
         if (write_call(EWOK_SOUNDS_TEST, rock_sounds_test) && write_code(EWOK_SOUNDS_TEST + 5, tail, 17))
             tlog("OK rock sounds");
     }
+
+    apply_party();
 
     if (g_arena.enabled) {
         if (expect(ARENA_CALL_1, "e8 de f7 ff ff", "arena 1") && expect(ARENA_CALL_2, "e8 e2 e9 ff ff", "arena 2") &&

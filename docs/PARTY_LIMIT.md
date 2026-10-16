@@ -69,6 +69,20 @@ follow-up that does the same for slots 8 and up. The ones read so far are simple
 clear a flag / set a field"); for example `FUN_00427EC0` clears `+0xEF0 & 0x200000`, `FUN_0055C120` zeroes
 `+0xD60` and `+0xEE8`, `FUN_0048F9B0` copies `+0x107E` to `+0x107F`.
 
+## Status
+
+Implemented as `[party] max = 12 | 16` in the patch (experimental). Added to the regions above after a
+second search (arrays indexed alongside the party arrays): `0x00855E84` (saved `+0xCBC`, 4 x 8) and
+`0x00876858` (up to 17 attackers per member, 0x88 x 8, range check `0x0043D469`). `0x0093D590` turned out
+to be the party carried between a level's areas (`FUN_00414D40` saves up to 8 there), not only Free Play.
+Not party data after all: `0x00856934` and the bounds `0x00424EA8` / `0x00424F4A` (character select grid),
+`0x0087B6C4` (2 players), `0x0087A840` (a 48-entry list).
+
+Follow-ups (stub after the relocated slot-7 instruction, same registers and flags): `0x0041F971` and
+`0x00493011` clear slots 8+, `0x00428796` `+0xEF0 &= edx`, `0x0043FD12` `+0x4B0 &= ecx`, `0x0048FB63` hearts,
+`0x0042C019` `+0xE39 = 4`, `0x0042C10B` `+0x1000`, `0x004EBF43` pool bit mask, `0x0055C30A` / `0x0055C51B`
+`+0xD60`, `+0xDA4`, `+0xEE8`. Not covered: `FUN_00491D50` (8-entry local list).
+
 ## Plan
 
 1. Allocate the regions above for N slots (N a multiple of 4, e.g. 12 or 16), keeping every stride, and

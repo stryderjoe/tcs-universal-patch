@@ -144,6 +144,7 @@ class Machine:
             "GetModuleHandleA": (1, lambda: 0x400000 if arg(0) == 0 else KERNEL32),
             "GetProcAddress": (2, lambda: self.thunk(self.cstr(arg(1)))),
             "GetCommandLineA": (0, lambda: self.cmdline),
+            "VirtualAlloc": (4, lambda: self.alloc(arg(1))),
             "GetPrivateProfileIntA": (4, lambda: self._ini_int(arg(0), arg(1), arg(2))),
             "GetPrivateProfileStringA": (6, lambda: self._ini_str(*[arg(i) for i in range(5)])),
         }
@@ -593,6 +594,159 @@ def main():
     t = empty.r32(0x882BD0 + 0x10)
     check("arena with an empty Jedi list only spawns Geonosians",
           t in (eidx["geonosian"], eidx["battledroid_geonosian"]), f"type {t}")
+
+    # --- party size 12 (experimental) ----------------------------------------------------------------------------
+    sys.path.insert(0, os.path.join(HERE, "..", "tools"))
+    import party_reloc_gen as prg
+    import capstone
+    pm = Machine({"party": {"max": "12"}})
+    relocs = prg.scan(EXE)
+    pm.install()
+    pm.start_game_code()
+    n = 12
+    bases, consistent, decodes = {}, True, True
+    md = capstone.Cs(capstone.CS_ARCH_X86, capstone.CS_MODE_32)
+    stock_img = pefile.PE(EXE).get_memory_mapped_image()
+    hook_sites = {0x41F971, 0x493011, 0x428796, 0x43FD12, 0x48FB63, 0x42C019, 0x42C10B, 0x4EBF43, 0x55C30A, 0x55C51B}
+    for addr, off, old, r, kind, text in relocs:
+        if addr in hook_sites:          # replaced by a jump to a follow-up stub (tested below)
+            continue
+        name, start, stride, slots, end = prg.REGIONS[r]
+        new = pm.r32(addr + off)
+        o = old - start
+        if r == 0 and o >= 32:
+            o += (n - 8) * 4
+        base = (new - o) & 0xFFFFFFFF
+        if bases.setdefault(r, base) != base:
+            consistent = False
+        ins_new = next(md.disasm(pm.rbytes(addr, 16), addr))
+        ins_old = next(md.disasm(stock_img[addr - 0x400000:addr - 0x400000 + 16], addr))
+        if ins_new.mnemonic != ins_old.mnemonic or ins_new.size != ins_old.size                 or ins_new.op_str.replace(hex(new), hex(old)) != ins_old.op_str:
+            decodes = False
+    check("no [party] setting: none of the address fields or hook sites changes",
+          all(m.r32(a + o) == old for a, o, old, *_ in relocs))
+    sizes = {r: prg.REGIONS[r][4] - prg.REGIONS[r][1] + (n - 8) * prg.REGIONS[r][2] for r in bases}
+    spans = sorted((bases[r], bases[r] + sizes[r]) for r in bases)
+    apart = all(a2 >= b1 for (a1, b1), (a2, b2) in zip(spans, spans[1:]))
+    check("party 12: every address field (1057) moved consistently into its own new region",
+          consistent and apart and len(bases) == len(prg.REGIONS), f"{len(relocs)} fields, {len(bases)} regions")
+    check("party 12: every rewritten instruction decodes as before, with only the address changed", decodes)
+    bounds_ok = all(pm.rbytes(a + o, 1)[0] == v for a, o, v in (
+        (0x40C637, 2, 12), (0x41FA95, 2, 12), (0x574426, 1, 12), (0x483B60, 2, 11), (0x43D469, 2, 12),
+        (0x41B828, 1, 12))) and pm.r32(0x414E7D + 1) == 12 and pm.r32(0x404DCA + 1) == 12
+    check("party 12: loop bounds raised (unlock list to 11)", bounds_ok)
+
+    # the game's own party builder with a level list of 12 characters
+    pidx = pm.make_definitions(CHARS)
+    game = pm.alloc(0x3000)
+    level = pm.alloc(0x200)
+    pm.uc.mem_write(level + 100, bytes([2]))
+    pm.w32(game + 0x128, level)
+    pm.w32(0x802C54, game)
+    loaded = pm.alloc(0x400)          # +0x1C: per-character "loaded" table (0 = loaded)
+    defs_holder = pm.alloc(0x40)
+    pm.w32(defs_holder + 0x1C, loaded)
+    pm.w32(defs_holder + 0x20, pm.r32(0x93B274))
+    pm.w32(0x29130E4, defs_holder)
+    for a in (0x951B50, 0x93B2A4, 0x93D81C, 0x87B2D4):
+        pm.w32(a, 0)
+    ids = [pidx[c[0]] for c in CHARS[:12]]
+    level_ids = bases[7]                # LEVEL_IDS region, moved
+    for k, i in enumerate(ids + [-1]):
+        pm.w16(level_ids + 2 * k, i)
+    made = []
+
+    def stub(uc, address, size, user):
+        if address in (0x41C7C0, 0x498A40, 0x4B6B80, 0x4D22B0, 0x55C9F0):
+            sp = uc.reg_read(UC_X86_REG_ESP)
+            result = 0
+            if address == 0x55C9F0:
+                result = pm.alloc(0x1100)
+                made.append(result)
+            uc.reg_write(UC_X86_REG_EAX, result)
+            uc.reg_write(UC_X86_REG_ESP, sp + 4)
+            uc.reg_write(UC_X86_REG_EIP, pm.r32(sp))
+    h = pm.uc.hook_add(UC_HOOK_CODE, stub, begin=0x41C7C0, end=0x55C9F0)
+    pm.call(0x41F940)
+    pm.uc.hook_del(h)
+    party = [pm.r32(bases[0] + 4 * k) for k in range(12)]
+    slots = [pm.rbytes(p_ + 0x280, 1)[0] for p_ in party if p_]
+    check("party 12: the game's party builder fills 12 slots from a 12-character level list",
+          party == made[:12] and len(made) == 12 and pm.r32(0x93D818) == 12 and slots == list(range(12)),
+          f"{len(made)} made, count {pm.r32(0x93D818)}, slots {slots}")
+    stock_party = [m.r32(0x93D7F0 + 4 * k) for k in range(8)]
+    check("party 12: the stock array is no longer written (the moved one is used)",
+          all(pm.r32(0x93D7F0 + 4 * k) == 0 for k in range(8)))
+
+    # follow-ups for code written out once per slot: slots 8..11 get what slots 0..7 get
+    extras = [pm.alloc(0x1100) for _ in range(4)]
+    slot7 = pm.alloc(0x1100)
+
+    def setup():
+        pm.w32(bases[0] + 4 * 7, slot7)
+        for k, e in enumerate(extras):
+            pm.w32(bases[0] + 4 * (8 + k), e)
+
+    def hook_run(site, length, regs=None):
+        setup()
+        r = {UC_X86_REG_EAX: 0x1111, UC_X86_REG_EBX: 0x80, UC_X86_REG_ECX: 0x3333, UC_X86_REG_EDX: 0x4444,
+             UC_X86_REG_ESI: 0x5555, UC_X86_REG_EDI: 0x6666}
+        r.update(regs or {})
+        pm.uc.reg_write(UC_X86_REG_EFLAGS, 0x246)
+        pm.run(site, site + length, regs=r)
+        kept = {k: pm.uc.reg_read(k) for k in r}
+        return r, kept, pm.uc.reg_read(UC_X86_REG_EFLAGS)
+
+    from unicorn.x86_const import UC_X86_REG_EFLAGS
+    r, kept, fl = hook_run(0x43FD12, 5, {UC_X86_REG_ECX: 0xFFFFBFFF})
+    for e in extras + [slot7]:
+        pass
+    ok_and = all(pm.r32(e + 0x4B0) == 0 for e in extras)
+    for e in extras:
+        pm.w32(e + 0x4B0, 0xFFFFFFFF)
+    r, kept, fl = hook_run(0x43FD12, 5, {UC_X86_REG_ECX: 0xFFFFBFFF})
+    check("follow-up FUN_0043E530: extra members get +0x4B0 &= ecx; the moved slot 7 is loaded; registers kept",
+          all(pm.r32(e + 0x4B0) == 0xFFFFBFFF for e in extras) and kept[UC_X86_REG_EAX] == slot7
+          and all(kept[k] == v for k, v in r.items() if k != UC_X86_REG_EAX))
+    for e in extras:
+        pm.w32(e + 0xEF0, 0xFFFFFFFF)
+    r, kept, fl = hook_run(0x428796, 7, {UC_X86_REG_EDX: 0xFFDFFFFF})
+    check("follow-up FUN_00427EC0: +0xEF0 &= edx, and the slot 7 compare still sets the flags (non-zero)",
+          all(pm.r32(e + 0xEF0) == 0xFFDFFFFF for e in extras) and not (fl & 0x40) and kept == r)
+    r, kept, fl = hook_run(0x42C019, 5)
+    check("follow-up FUN_0042B960 first block: +0xE39 = 4", all(pm.rbytes(e + 0xE39, 1)[0] == 4 for e in extras))
+    pm.uc.mem_write(extras[0] + 0x1FC, bytes([0x80]))
+    pm.uc.mem_write(extras[1] + 0x1FC, bytes([0x00]))
+    pm.w32(extras[1] + 0x1000, 0x12345678)
+    r, kept, fl = hook_run(0x42C10B, 5, {UC_X86_REG_EBX: 0x80})
+    check("follow-up FUN_0042B960 second block: +0x1000 is the constant when bit 0x80 is set, else 0",
+          pm.r32(extras[0] + 0x1000) == pm.r32(0x751C40) and pm.r32(extras[1] + 0x1000) == 0)
+    for k, e in enumerate(extras):
+        pm.uc.mem_write(e + 0x107E, bytes([3 + k]))
+    pm.uc.mem_write(0x802BD4, bytes([4]))
+    r, kept, fl = hook_run(0x48FB63, 5)
+    check("follow-up FUN_0048F9B0: hearts copied (+0x107E to +0x107F) and each record's byte 8 set",
+          all(pm.rbytes(e + 0x107F, 1)[0] == 3 + k for k, e in enumerate(extras))
+          and all(pm.rbytes(bases[1] + 0x10 * k + 8, 1)[0] == 4 for k in range(8, 12)))
+    mask_owner = pm.alloc(0x1000)
+    pm.w32(0x87A7F0, mask_owner)
+    for k, e in enumerate(extras):
+        pm.uc.mem_write(e + 0x28D, bytes([30 + 2 * k]))
+    r, kept, fl = hook_run(0x4EBF43, 5, {UC_X86_REG_EBX: 1})
+    want = sum(1 << (30 + 2 * k) for k in range(4))
+    got = pm.r32(mask_owner + 0xEB8) | (pm.r32(mask_owner + 0xEBC) << 32)
+    check("follow-up FUN_004EBDA0: each extra member's pool bit set in the 64-bit mask", got == want, hex(got))
+    for e in extras:
+        pm.w32(e + 0xD60, 7)
+        pm.w32(e + 0xEE8, 7)
+    r, kept, fl = hook_run(0x55C30A, 5)
+    r2, kept2, fl2 = hook_run(0x55C51B, 5)
+    check("follow-ups FUN_0055C120 / FUN_0055C350: +0xD60 = 0, +0xDA4 = the constant, +0xEE8 = 0",
+          all(pm.r32(e + 0xD60) == 0 and pm.r32(e + 0xEE8) == 0 and pm.r32(e + 0xDA4) == pm.r32(0x802BE8)
+              for e in extras))
+    r, kept, fl = hook_run(0x493011, 5, {UC_X86_REG_EAX: 0})
+    check("follow-up FUN_00492B40: slots 8..11 cleared with slot 7",
+          all(pm.r32(bases[0] + 4 * k) == 0 for k in range(7, 12)))
 
     # --- arena off: stock function untouched ------------------------------------------------------------------------
     off = Machine({"arena": {"enabled": "0"}})
