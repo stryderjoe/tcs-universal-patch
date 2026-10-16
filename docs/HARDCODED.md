@@ -107,6 +107,11 @@ Projectile type is chosen by `FUN_00407E40(character, default)`, a chain of iden
 The Geonosian is handled before the picker: `FUN_004B3D40` fires type `0x13` "geonosian" when the
 character is `geonosian` and instance `+0xEF0 & 0x200` is set. That bit is rolled 50/50 at spawn
 (`FUN_0041BC20`), and `FUN_0041A5B0` switches its model layers with it.
+Projectile assets: each type's entry names a model and an impact effect by number. The impact effects are
+global (`EWOK_POP1`, effect `0x74` in the 147-name list at `0x007F5DD0`, is in `STUFF/GENERAL.PTL`), but the
+Ewok, Wicket and boulder models (`Pebble_Wicket`, `PhotonTorpedo_Wicket`, `Part_Boulder`, ...) live in those
+characters' icon scenes under `STUFF/ICONS/`, so a level has them only when it loads that character.
+
 Rock sounds: the level preload `FUN_004BDE10` loads `wpn_bomb_drop` and `exp_bomb` only when ewok or wicket
 is in the level (`0x004BFDCA`), so another character firing Ewok pebbles there would be silent.
 

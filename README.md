@@ -38,8 +38,11 @@ What this unlocks:
   way: `can_jump enter_vehicles`, plus `drive_vehicles` for levels that hand vehicles over by script. Or
   `behaviour="standard"` for the whole standard routine, as IG-88 has.
 - Ewok rocks, Geonosian bolts or Indiana Jones bullets on anyone: `bullet="ewokpebble"`,
-  `bullet="geonosian"`, `bullet="bullet"` (the character still needs `blaster` to shoot). A level only loads
-  the rock sounds when an Ewok is in it; the patch also loads them for any character firing an Ewok type.
+  `bullet="geonosian"`, `bullet="bullet"` (the character still needs `blaster` to shoot).
+  **Ewok and catapult projectiles need their owner in the level:** the pebble, torpedo and boulder models are
+  stored in the Ewok's, Wicket's and the catapult's icon scenes (`STUFF/ICONS/*_ICON_PC.GSC`), which a level
+  loads only for characters it loads. Add e.g. `character "Ewok" resident` to the level's `.TXT`. (The
+  impact effect `EWOK_POP1` is global; the rock sounds are also preloaded by the patch.) Not yet seen in game.
 
 ## TCSUniversal.ini
 
