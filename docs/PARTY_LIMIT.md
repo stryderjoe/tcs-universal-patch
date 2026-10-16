@@ -56,8 +56,8 @@ Not bounds although they compare with 8: `0x0040B053`, `0x00428657`, `0x0044A885
 `0x0046C597`, `0x004B92B7`, `0x004918A3`, `0x0047CEA3`, `0x004B1934`, `0x004BB171`, `0x005740E4`,
 `0x005988E2`, and loops of 2 (`0x00489322`, `0x004B7939`).
 
-Unclear: 8 floats at `0x00950DB4` (`FUN_0056EE80`), a loop of 8 over `+0xA0` in `FUN_00411980` /
-`0x004138E3`.
+Checked and not party data: `0x00950DB4` (a pool of 8 timed entries of 0x38 bytes, `FUN_0056EE80`) and a
+loop of 8 over `+0xA0` inside another object (`FUN_00411980` / `0x004138E3`).
 
 ## Code written out once per slot
 
