@@ -288,7 +288,7 @@ def main():
 
     # --- start-up path ---------------------------------------------------------------------------------------
     m = Machine(INI)
-    stock = {a: m.rbytes(a, 5) for a in (0x5896D6, 0x48ABFD, 0x407E40, 0x55E470, 0x55F360, 0x4DEABD, 0x4DF8B9)}
+    stock = {a: m.rbytes(a, 5) for a in (0x5896D6, 0x48ABFD, 0x407E40, 0x55E470, 0x55F360, 0x4DEABD, 0x4DF8B9, 0x454593)}
     real = m.r32(IAT_GETCOMMANDLINEA)
     check("installs on the supported build", m.install() == 1)
     hooked = m.r32(IAT_GETCOMMANDLINEA)
@@ -303,7 +303,7 @@ def main():
 
     got = m.start_game_code()
     changed = [hex(a) for a, b in stock.items() if m.rbytes(a, 5) != b]
-    check("decrypted code: patches every site", len(changed) == 7, ", ".join(changed))
+    check("decrypted code: patches every site", len(changed) == 8, ", ".join(changed))
     check("restores the real GetCommandLineA and returns its result",
           m.r32(IAT_GETCOMMANDLINEA) == real and m.cstr(got) == "LEGOStarWarsSaga.exe")
 
@@ -311,9 +311,9 @@ def main():
     names = []
     while m.r32(table + 8 * len(names)):
         names.append(m.cstr(m.r32(table + 8 * len(names))))
-    check("keyword table: 207 stock keywords kept, 4 added, terminated",
-          len(names) == 211 and names[:207] == [m.cstr(m.r32(0x804248 + 8 * i)) for i in range(207)]
-          and names[207:] == ["behaviour", "behavior", "bullet", "pull_levers"], f"{len(names)} entries")
+    check("keyword table: 207 stock keywords kept, 5 added, terminated",
+          len(names) == 212 and names[:207] == [m.cstr(m.r32(0x804248 + 8 * i)) for i in range(207)]
+          and names[207:] == ["behaviour", "behavior", "bullet", "pull_levers", "drive_vehicles"], f"{len(names)} entries")
 
     other = Machine(INI, timestamp=0x12345678)
     check("refuses another build (timestamp)", other.install() == 0 and other.r32(IAT_GETCOMMANDLINEA) != 0
@@ -327,8 +327,8 @@ def main():
             m.set_id(name, idx[name])
         except KeyError:
             pass
-    parse_keywords(m, idx["mydroid"], 'hit_points=4\nbehaviour="standard"\nbullet="geonosian"\npull_levers\n')
-    parse_keywords(m, idx["myguard"], 'weapon_locator=0\nbehaviour="jedi"\nbullet=43\npull_levers off\n')
+    parse_keywords(m, idx["mydroid"], 'hit_points=4\nbehaviour="standard"\nbullet="geonosian"\npull_levers\ndrive_vehicles\n')
+    parse_keywords(m, idx["myguard"], 'weapon_locator=0\nbehaviour="jedi"\nbullet=43\npull_levers off\ndrive_vehicles off\n')
     hp = m.rbytes(m.r32(0x93B284) + idx["mydroid"] * 0x120 + 0xF4, 1)[0]
     check("stock keyword still parsed next to the new ones (hit_points=4)", hp == 4, f"hit_points {hp}")
 
@@ -360,6 +360,24 @@ def main():
     check("pull_levers / pull_levers off override both lever rules",
           lever("mydroid") == 1 and lever("myguard") == 0 and lever("myguard", 0x55F360) == 0
           and lever("battledroid", 0x55F360) == 1)
+
+    # --- scripted vehicle take-over (FUN_004543E0's droid test) --------------------------------------------------
+    def takeover(name):
+        """Run the patched test; True when the take-over goes ahead."""
+        stops = []
+
+        def stop(uc, address, size, user):
+            if address in (0x45459C, 0x4545C3):
+                stops.append(address)
+                uc.emu_stop()
+        h = m.uc.hook_add(UC_HOOK_CODE, stop, begin=0x45459C, end=0x4545C3)
+        m.run(0x454593, 0x4545CD, regs={UC_X86_REG_EDX: m.make_instance(idx[name])})
+        m.uc.hook_del(h)
+        return stops[:1] == [0x45459C]
+    check("vehicle take-over: stock droid refused, others allowed",
+          not takeover("battledroid_geonosian") and takeover("hansolo") and not takeover("ig88"))
+    check("drive_vehicles / drive_vehicles off override the droid test",
+          takeover("mydroid") and not takeover("myguard"))
 
     # --- Geonosis arena --------------------------------------------------------------------------------------------
     slots = 0x882BD0

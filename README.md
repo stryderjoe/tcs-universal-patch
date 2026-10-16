@@ -3,7 +3,7 @@
 A small `dinput8.dll` for LEGO Star Wars: The Complete Saga (PC, Steam build) that turns behaviours the
 game ties to particular characters into settings any character can use. Research: `docs/HARDCODED.md`.
 
-**Status: experimental. Checked in an emulator against the game's own code (24 of 24 checks, below); not yet
+**Status: experimental. Checked in an emulator against the game's own code (26 of 26 checks, below); not yet
 run in the game.** Every patch site is checked byte for byte first; anything that does not match is skipped
 and logged. Please report what you see in game.
 
@@ -22,12 +22,14 @@ Use them in a character `.txt` like the stock keywords, or in `TCSUniversal.ini`
 | `behaviour="…"` (or `behavior`) | `standard`, `jedi`, `droid`, `protocol`, `astromech`, `beast`, `winged`, `superbattledroid`, `droideka`, `jawa`, `variant0` | Which native behaviour and AI routine the character runs, instead of the one its categories or name pick |
 | `bullet="…"` | a projectile name or number (list in `docs/HARDCODED.md`, e.g. `ewokpebble`, `geonosian`, `bullet`, `spear`, `blue`) | Projectile type for this character's shots |
 | `pull_levers` / `pull_levers off` | | Allow or forbid levers, whatever the categories say |
+| `drive_vehicles` / `drive_vehicles off` | | Allow or forbid the scripted vehicle take-over, which refuses droids in the stock game |
 
 What this unlocks:
 
 - A melee weapon with a streak on any character (not only MagnaGuard and Royal Guard):
   `weapon="spear" streak=red streak_1_locators=6,7 behaviour="jedi"`.
-- A droid that jumps and drives vehicles (not only IG-88 and 4-LOM): `behaviour="standard"`.
+- A droid that jumps and drives vehicles (not only IG-88 and 4-LOM): `behaviour="standard"`, plus
+  `drive_vehicles` for levels that hand vehicles over by script.
 - Ewok rocks, Geonosian bolts or Indiana Jones bullets on anyone: `bullet="ewokpebble"`,
   `bullet="geonosian"`, `bullet="bullet"` (the character still needs `blaster` to shoot).
 
@@ -53,15 +55,15 @@ Jedi named in `[arena]` must be loaded by the level: add them as `resident` in
 ## Not covered
 
 The party limit of 8 is a fixed array read in 401 places; this patch does not change it (details in
-`docs/HARDCODED.md`). Droids are still refused by the scripted take-over action (`FUN_004543E0`).
+`docs/HARDCODED.md`).
 
 ## Checks
 
 `tests/emulate.py` maps your unwrapped `LEGOStarWarsSaga.exe` image and the test build of the DLL
 (`build_test.bat`) into the Unicorn x86 emulator and runs the game's own code through every patched site:
 the start-up hook (including "code still encrypted" and "wrong build"), the extended keyword table, the
-game's real tokenizer on character text, its behaviour assignment, projectile picker, both lever rules and
-the arena picker. It also parses all 345 stock character files with the stock and the extended keyword
+game's real tokenizer on character text, its behaviour assignment, projectile picker, both lever rules, the
+scripted vehicle take-over and the arena picker. It also parses all 345 stock character files with the stock and the extended keyword
 table and checks that the stored definitions are byte-identical. Needs `pip install unicorn pefile`; the
 exe path comes from the command line or `TCS_EXE`, the character folder from `TCS_CHARS`. No game files are
 included.
