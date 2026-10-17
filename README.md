@@ -3,7 +3,7 @@
 A small `dinput8.dll` for LEGO Star Wars: The Complete Saga (PC, Steam build) that turns behaviours the
 game ties to particular characters into settings any character can use. Research: `docs/HARDCODED.md`.
 
-**Status: experimental. Checked in an emulator against the game's own code (58 of 58 checks, below); not yet
+**Status: experimental. Checked in an emulator against the game's own code (62 of 62 checks, below); not yet
 run in the game.** Every patch site is checked byte for byte first; anything that does not match is skipped
 and logged. Please report what you see in game.
 
@@ -109,7 +109,7 @@ their stock addresses (26 references) and rewrites 9 address fields the four-pla
 (`build_test.bat`) into the Unicorn x86 emulator and runs the game's own code through every patched site:
 the start-up hook (including "code still encrypted" and "wrong build"), the extended keyword table, the
 game's real tokenizer on character text, its behaviour assignment, projectile picker, both lever rules, the
-scripted vehicle take-over, the droid routine's jump and vehicle entry, the three saber call sites, the six Geonosian checks, the weapon-out test, the rock-sound preload, the arena picker, `acts_as` at all 528 name checks (and through the game's projectile picker), and for `[party] max = 12` every moved address, the raised bounds, the game's own party builder filling 12 slots, each follow-up, and the ambient-effect list (untouched with 8 or fewer, the 8 nearest otherwise), and `[chain]` (the named file loaded once from the game folder, every `DirectInput8Create` passed on, bad names ignored, `[party]` refused). It also parses all 345 stock character files with the stock and the extended keyword
+scripted vehicle take-over, the droid routine's jump and vehicle entry, the three saber call sites, the six Geonosian checks, the weapon-out test, the rock-sound preload, the level loader's extra icon scenes for characters firing Ewok, Wicket or catapult projectiles, the arena picker, `acts_as` at all 528 name checks (and through the game's projectile picker), and for `[party] max = 12` every moved address, the raised bounds, the game's own party builder filling 12 slots, each follow-up, and the ambient-effect list (untouched with 8 or fewer, the 8 nearest otherwise), and `[chain]` (the named file loaded once from the game folder, every `DirectInput8Create` passed on, bad names ignored, `[party]` refused). It also parses all 345 stock character files with the stock and the extended keyword
 table and checks that the stored definitions are byte-identical. Needs `pip install unicorn pefile`; the
 exe path comes from the command line or `TCS_EXE`, the character folder from `TCS_CHARS`. No game files are
 included.
