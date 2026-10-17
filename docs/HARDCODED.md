@@ -142,6 +142,13 @@ Projectile assets: each type's entry names a model and an impact effect by numbe
 global (`EWOK_POP1`, effect `0x74` in the 147-name list at `0x007F5DD0`, is in `STUFF/GENERAL.PTL`), but the
 Ewok, Wicket and boulder models (`Pebble_Wicket`, `PhotonTorpedo_Wicket`, `Part_Boulder`, ...) live in those
 characters' icon scenes under `STUFF/ICONS/`, so a level has them only when it loads that character.
+They are named objects of type 3 in the table at `0x007F44F8` (entries 240-246: `part_boulder`,
+`pebble_ewok`, `photontorpedo_ewok`, `photontorpedoglow_ewok` and the three `_wicket` ones). When a level's
+world is set up, `FUN_0057A000` looks for every type-3 name in the icon scene of each character whose icon is
+loaded (`FUN_0055B6C0(id)`, table `0x0093B270`). The level load `FUN_0048AFE0` loads icons only for its own
+character list (`FUN_0055B6E0` at `0x0048B2EB`). The patch wraps that call and then loads the owner's icon
+too (Ewok for types `0x1B`/`0x1E`, Wicket for `0x1C`/`0x1F`, the catapult for `0x1D`, also through
+`acts_as`).
 
 Rock sounds: the level preload `FUN_004BDE10` loads `wpn_bomb_drop` and `exp_bomb` only when ewok or wicket
 is in the level (`0x004BFDCA`), so another character firing Ewok pebbles there would be silent.

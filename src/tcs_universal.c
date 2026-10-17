@@ -90,6 +90,8 @@ static const fn_void       assign_behaviours = (fn_void)0x00414400;
 #define EWOK_SOUNDS_SKIP   0x004BFE15u
 #define ID_EWOK_ADDR       0x007F1924u
 #define ID_WICKET_ADDR     0x007F1928u
+#define ID_CATAPULT_ADDR   0x007F192Cu
+#define LEVEL_ICON_CALL    0x0048B2EBu   /* level load: call FUN_0055B6E0 with its character list */
 #define BULLET_TABLE       0x007EF388u   /* 0xA4 bytes per type, name first */
 #define BULLET_COUNT       0x2C
 
@@ -753,6 +755,46 @@ static __declspec(naked) void rock_sounds_test(void)
     }
 }
 
+/* ------------------------------------------------------------------ Ewok and catapult projectile models */
+/* The pebble, torpedo and boulder models (pebble_ewok, photontorpedo_ewok, pebble_wicket, part_boulder, ...)
+   are named objects of type 3 in the table at 0x007F44F8: FUN_0057A000 looks for them in the icon scene of
+   every character whose icon is loaded. A level loads only its own characters' icons (FUN_0048AFE0 passes
+   its character list to FUN_0055B6E0 at 0x0048B2EB). Also load the owner's icon when a listed character
+   fires one of those types through bullet= or acts_as=. */
+typedef void (__cdecl *fn_icons)(short *list, int load, void *heap, void *limit);
+static const fn_icons load_icons = (fn_icons)0x0055B6E0;
+
+static short projectile_owner(int id)
+{
+    short ewok = *(short *)ID_EWOK_ADDR, wicket = *(short *)ID_WICKET_ADDR, catapult = *(short *)ID_CATAPULT_ADDR;
+    int t, a;
+    if (id < 0 || id >= MAX_DEFS) return -1;
+    t = g_bullet[id]; a = g_acts_as[id];
+    if (t == 0x1B || t == 0x1E || (a != -1 && a == ewok)) return ewok;
+    if (t == 0x1C || t == 0x1F || (a != -1 && a == wicket)) return wicket;
+    if (t == 0x1D || (a != -1 && a == catapult)) return catapult;
+    return -1;
+}
+
+static void __cdecl level_icons_hook(short *list, int load, void *heap, void *limit)
+{
+    short extra[8];
+    int n = 0, k, j;
+    load_icons(list, load, heap, limit);
+    if (!list) return;
+    for (k = 0; list[k * 2] != -1 && n < 3; k++) {
+        short owner;
+        if (!list[k * 2 + 1] || (owner = projectile_owner(list[k * 2])) < 0) continue;
+        for (j = 0; j < n && extra[j * 2] != owner; j++) ;
+        if (j < n) continue;
+        extra[n * 2] = owner; extra[n * 2 + 1] = 1; n++;
+        tlog("level icons: loading character %d's icon for the projectiles of %d", owner, list[k * 2]);
+    }
+    if (!n) return;
+    extra[n * 2] = -1; extra[n * 2 + 1] = 0;
+    load_icons(extra, load, heap, limit);
+}
+
 /* ------------------------------------------------------------------ acts_as */
 /* Each "cmp ax|cx|dx, word ptr [ID_x]" followed by je/jne becomes "call stub; nop; nop". The stub repeats
    the compare; when it does not match, ZF is set if the compared character acts as ID_x. Only ZF is used
@@ -1259,6 +1301,9 @@ static void apply_patches(void)
         if (write_call(EWOK_SOUNDS_TEST, rock_sounds_test) && write_code(EWOK_SOUNDS_TEST + 5, tail, 17))
             tlog("OK rock sounds");
     }
+    if (expect(LEVEL_ICON_CALL, "e8 f0 03 0d 00 a1 64 13 95 00 83 c4 10", "level icons") &&
+        write_call(LEVEL_ICON_CALL, level_icons_hook))
+        tlog("OK level icons");
 
     apply_party();
 

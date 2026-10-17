@@ -40,10 +40,10 @@ What this unlocks:
   `behaviour="standard"` for the whole standard routine, as IG-88 has.
 - Ewok rocks, Geonosian bolts or Indiana Jones bullets on anyone: `bullet="ewokpebble"`,
   `bullet="geonosian"`, `bullet="bullet"` (the character still needs `blaster` to shoot).
-  **Ewok and catapult projectiles need their owner in the level:** the pebble, torpedo and boulder models are
-  stored in the Ewok's, Wicket's and the catapult's icon scenes (`STUFF/ICONS/*_ICON_PC.GSC`), which a level
-  loads only for characters it loads. Add e.g. `character "Ewok" resident` to the level's `.TXT`. (The
-  impact effect `EWOK_POP1` is global; the rock sounds are also preloaded by the patch.) Not yet seen in game.
+  The pebble, torpedo and boulder models are stored in the Ewok's, Wicket's and the catapult's icon scenes
+  (`STUFF/ICONS/*_ICON_PC.GSC`), which a level loads only for its own characters; the patch also loads the
+  owner's icon scene (108 or 29 KB) when a level character fires those projectiles. The rock sounds are
+  preloaded the same way; the impact effect `EWOK_POP1` is global. Not yet seen in game.
 
 ## TCSUniversal.ini
 

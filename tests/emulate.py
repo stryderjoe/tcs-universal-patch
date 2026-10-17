@@ -532,6 +532,40 @@ def main():
           rock_sounds("ewok") and rock_sounds("battledroid") and not rock_sounds("hansolo")
           and not rock_sounds("mydroid"))
 
+    # --- Ewok projectile models: the owner's icon scene is loaded with the level ----------------------------------
+    def level_icons(names):
+        """Run the level load's icon call (0x0048B2EB) on a character list; return the icon indices loaded."""
+        n = m.r32(0x93B278)
+        for i in range(n):
+            m.w16(m.r32(0x93B274) + i * 0x4C + 0x42, 100 + i)   # each character's icon index
+        m.w32(0x93B270, m.alloc(4 * n))                         # icon scene table, nothing loaded yet
+        lst = b"".join(struct.pack("<hh", idx[x], 1) for x in names) + struct.pack("<hh", -1, 0)
+        loaded, scene = [], m.alloc(0x200)
+
+        def icon_name(uc, address, size, user):   # FUN_0057A360(icon index) -> name
+            sp = uc.reg_read(UC_X86_REG_ESP)
+            loaded.append(m.r32(sp + 4))
+            uc.reg_write(UC_X86_REG_EAX, m.alloc(b"icon\0"))
+            uc.reg_write(UC_X86_REG_ESP, sp + 4)
+            uc.reg_write(UC_X86_REG_EIP, m.r32(sp))
+
+        def load_scene(uc, address, size, user):  # FUN_005EF7F0(heap, limit, path) -> a scene
+            sp = uc.reg_read(UC_X86_REG_ESP)
+            uc.reg_write(UC_X86_REG_EAX, scene)
+            uc.reg_write(UC_X86_REG_ESP, sp + 4)
+            uc.reg_write(UC_X86_REG_EIP, m.r32(sp))
+        hs = [m.uc.hook_add(UC_HOOK_CODE, icon_name, begin=0x57A360, end=0x57A360),
+              m.uc.hook_add(UC_HOOK_CODE, load_scene, begin=0x5EF7F0, end=0x5EF7F0)]
+        m.run(0x48B2D8, 0x48B2F0, regs={UC_X86_REG_ESI: m.alloc(lst)})
+        for h in hs:
+            m.uc.hook_del(h)
+        return [i - 100 for i in loaded]
+    got = [level_icons(["battledroid"]), level_icons(["hansolo"]), level_icons(["ewok", "battledroid", "hansolo"])]
+    check("projectile models: the Ewok's icon is loaded with a character firing Ewok pebbles, once, "
+          "and nothing extra for others",
+          got == [[idx["battledroid"], idx["ewok"]], [idx["hansolo"]], [idx["ewok"], idx["battledroid"], idx["hansolo"]]],
+          f"{got}; ewok {idx['ewok']} battledroid {idx['battledroid']} hansolo {idx['hansolo']}")
+
     # --- Geonosis arena --------------------------------------------------------------------------------------------
     slots = 0x882BD0
     m.w16(0x888ED0, 8)
